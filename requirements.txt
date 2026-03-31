@@ -1,0 +1,4 @@
+simple-sentencepiece
+torch
+atdataset
+torchaudio
