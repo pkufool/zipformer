@@ -29,11 +29,14 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.scripts]
+zipformer = "zipformer.cli:main"
+
 [tool.setuptools]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["zipformer"]
+include = ["zipformer", "zipformer.*"]
 
 [tool.black]
 line-length = 88
