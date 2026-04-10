@@ -125,18 +125,7 @@ class AttributeDict(dict):
         return json.dumps(tmp, indent=indent, sort_keys=True)
 
 
-@dataclass
-class KeywordResult:
-    timestamps: List[int]
-    hyps: List[int]
-    phrase: str
 
-
-@dataclass
-class DecodingResults:
-    timestamps: List[List[int]]
-    hyps: Union[List[List[int]], k2.RaggedTensor]
-    scores: Optional[List[List[float]]] = None
 
 
 def store_transcripts(

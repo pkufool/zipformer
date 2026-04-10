@@ -17,39 +17,34 @@
 import math
 from typing import List, Optional, Tuple
 
-import k2
 import torch
 from zipformer.decode.search import Hypothesis, HypothesisList
 
-from icefall.utils import AttributeDict
+from zipformer.utils.utils import AttributeDict
 
 
 class DecodeStream(object):
     def __init__(
         self,
         params: AttributeDict,
-        cut_id: str,
+        utt_id: str,
         initial_states: List[torch.Tensor],
-        decoding_graph: Optional[k2.Fsa] = None,
         device: torch.device = torch.device("cpu"),
     ) -> None:
         """
         Args:
+          params:
+            The decoding parameters.
+          utt_id:
+            The utterance id of this stream.
           initial_states:
             Initial decode states of the model, e.g. the return value of
             `get_init_state` in conformer.py
-          decoding_graph:
-            Decoding graph used for decoding, may be a TrivialGraph or a HLG.
-            Used only when decoding_method is fast_beam_search.
           device:
             The device to run this stream.
         """
-        if params.decoding_method == "fast_beam_search":
-            assert decoding_graph is not None
-            assert device == decoding_graph.device
-
         self.params = params
-        self.cut_id = cut_id
+        self.utt_id = utt_id
         self.LOG_EPS = math.log(1e-10)
 
         self.states = initial_states
@@ -86,11 +81,6 @@ class DecodeStream(object):
                     ys=[params.blank_id] * params.context_size,
                     log_prob=torch.zeros(1, dtype=torch.float32, device=device),
                 )
-            )
-        elif params.decoding_method == "fast_beam_search":
-            # The rnnt_decoding_stream for fast_beam_search.
-            self.rnnt_decoding_stream: k2.RnntDecodingStream = k2.RnntDecodingStream(
-                decoding_graph
             )
         else:
             raise ValueError(f"Unsupported decoding method: {params.decoding_method}")
@@ -142,5 +132,4 @@ class DecodeStream(object):
             best_hyp = self.hyps.get_most_probable(length_norm=True)
             return best_hyp.ys[self.params.context_size :]  # noqa
         else:
-            assert self.params.decoding_method == "fast_beam_search"
-            return self.hyp
+            raise ValueError(f"Unsupported decoding method: {self.params.decoding_method}")

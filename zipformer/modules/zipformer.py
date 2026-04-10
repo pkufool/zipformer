@@ -113,7 +113,7 @@ class Zipformer(torch.nn.Module):
         chunk_size: Tuple[int] = [-1],
         left_context_frames: Tuple[int] = [-1],
     ) -> None:
-        super(Zipformer2, self).__init__()
+        super(Zipformer, self).__init__()
 
         if dropout is None:
             dropout = ScheduledFloat((0.0, 0.3), (20000.0, 0.1))

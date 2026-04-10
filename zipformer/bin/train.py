@@ -917,7 +917,7 @@ def compute_loss(
     device = model.device if isinstance(model, DDP) else next(model.parameters()).device
     feature = batch["feature"].to(device)
     feature_lens = batch["feature_lens"].to(device)
-    texts = batch["texts"]
+    texts = batch["label"]
     y = sp.encode(texts, out_type=int)
 
     batch_idx_train = params.batch_idx_train
@@ -1111,7 +1111,7 @@ def train_one_epoch(
         batch_size = len(batch["ids"])
 
         try:
-            with torch.cuda.amp.autocast(
+            with torch.amp.autocast("cuda",
                 enabled=params.use_autocast, dtype=params.dtype
             ):
                 loss, loss_info = compute_loss(
@@ -1424,7 +1424,7 @@ def run(local_rank, world_size, args):
     _filter_func = partial(filter_func, sp=sp, sample_rate=params.sample_rate)
 
     train_dl = ATDataloader(
-        manifests=training_sets,
+        datasets=training_sets,
         epoch_hours=params.epoch_hours,
         mux_weights=training_weights,
         max_duration=params.max_duration,
@@ -1531,9 +1531,9 @@ def display_and_save_batch(
     logging.info(f"Saving batch to {filename}")
     torch.save(batch, filename)
 
-    features = batch["feature"]
+    feature = batch["feature"]
 
-    logging.info(f"features shape: {feature.shape}")
+    logging.info(f"feature shape: {feature.shape}")
 
     y = sp.encode(batch["texts"], out_type=int)
     num_tokens = sum(len(i) for i in y)
