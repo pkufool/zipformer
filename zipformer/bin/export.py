@@ -299,7 +299,9 @@ def export_onnx_fp16_large_2gb(onnx_fp32_path, onnx_fp16_path):
     onnxmltools.utils.save_model(onnx_fp16_model, onnx_fp16_path)
 
 
-def build_streaming_inputs_outputs(tensors, i, inputs, outputs, input_names, output_names):
+def build_streaming_inputs_outputs(
+    tensors, i, inputs, outputs, input_names, output_names
+):
     """Build dynamic axes for streaming encoder states."""
     assert len(tensors) == 6, len(tensors)
 
@@ -365,9 +367,13 @@ def get_streaming_meta_data(encoder_model, comment, use_whisper_features=False):
         "comment": comment,
         "decode_chunk_len": str(encoder_model.chunk_size * 2),
         "T": str(encoder_model.chunk_size * 2 + encoder_model.pad_length),
-        "num_encoder_layers": ",".join(map(str, encoder_model.encoder.num_encoder_layers)),
+        "num_encoder_layers": ",".join(
+            map(str, encoder_model.encoder.num_encoder_layers)
+        ),
         "encoder_dims": ",".join(map(str, encoder_model.encoder.encoder_dim)),
-        "cnn_module_kernels": ",".join(map(str, encoder_model.encoder.cnn_module_kernel)),
+        "cnn_module_kernels": ",".join(
+            map(str, encoder_model.encoder.cnn_module_kernel)
+        ),
         "left_context_len": ",".join(map(str, left_context_len_list)),
         "query_head_dims": ",".join(map(str, encoder_model.encoder.query_head_dim)),
         "value_head_dims": ",".join(map(str, encoder_model.encoder.value_head_dim)),
@@ -407,8 +413,12 @@ def export_streaming_encoder_onnx(
 
     for i in range(len(init_state[:-2]) // 6):
         build_streaming_inputs_outputs(
-            init_state[i * 6 : (i + 1) * 6], i,
-            inputs, outputs, input_names, output_names,
+            init_state[i * 6 : (i + 1) * 6],
+            i,
+            inputs,
+            outputs,
+            input_names,
+            output_names,
         )
 
     # (batch_size, channels, left_pad, freq)
@@ -597,7 +607,9 @@ class OnnxEncoder(nn.Module):
         self.encoder_embed = encoder_embed
         self.encoder_proj = encoder_proj
 
-    def forward(self, x: torch.Tensor, x_lens: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, x_lens: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         x, x_lens = self.encoder_embed(x, x_lens)
         src_key_padding_mask = make_pad_mask(x_lens, x.shape[1])
         x = x.permute(1, 0, 2)
@@ -630,7 +642,9 @@ class OnnxJoiner(nn.Module):
         super().__init__()
         self.output_linear = output_linear
 
-    def forward(self, encoder_out: torch.Tensor, decoder_out: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, encoder_out: torch.Tensor, decoder_out: torch.Tensor
+    ) -> torch.Tensor:
         logit = encoder_out + decoder_out
         logit = self.output_linear(torch.tanh(logit))
         return logit
@@ -668,7 +682,9 @@ def _export_encoder_model_onnx(encoder_model, encoder_filename, opset_version=11
     add_meta_data(filename=encoder_filename, meta_data=meta_data)
 
 
-def _export_decoder_model_onnx(decoder_model, decoder_filename, opset_version=11, dynamic_batch=True):
+def _export_decoder_model_onnx(
+    decoder_model, decoder_filename, opset_version=11, dynamic_batch=True
+):
     context_size = decoder_model.decoder.context_size
     vocab_size = decoder_model.decoder.vocab_size
 
@@ -697,7 +713,9 @@ def _export_decoder_model_onnx(decoder_model, decoder_filename, opset_version=11
     add_meta_data(filename=decoder_filename, meta_data=meta_data)
 
 
-def _export_joiner_model_onnx(joiner_model, joiner_filename, opset_version=11, dynamic_batch=True):
+def _export_joiner_model_onnx(
+    joiner_model, joiner_filename, opset_version=11, dynamic_batch=True
+):
     joiner_dim = joiner_model.output_linear.weight.shape[1]
     logging.info(f"joiner dim: {joiner_dim}")
 
@@ -821,7 +839,9 @@ class OnnxCtcModel(nn.Module):
         self.encoder_embed = encoder_embed
         self.ctc_output = ctc_output
 
-    def forward(self, x: torch.Tensor, x_lens: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, x_lens: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         x, x_lens = self.encoder_embed(x, x_lens)
         src_key_padding_mask = make_pad_mask(x_lens)
         x = x.permute(1, 0, 2)
@@ -924,7 +944,9 @@ class OnnxStreamingEncoder(nn.Module):
 
         cached_embed_left_pad = states[-2]
         x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=x, x_lens=x_lens, cached_left_pad=cached_embed_left_pad,
+            x=x,
+            x_lens=x_lens,
+            cached_left_pad=cached_embed_left_pad,
         )
         assert x.size(1) == self.chunk_size, (x.size(1), self.chunk_size)
 
@@ -946,7 +968,9 @@ class OnnxStreamingEncoder(nn.Module):
             encoder_out_lens,
             new_encoder_states,
         ) = self.encoder.streaming_forward(
-            x=x, x_lens=x_lens, states=encoder_states,
+            x=x,
+            x_lens=x_lens,
+            states=encoder_states,
             src_key_padding_mask=src_key_padding_mask,
         )
         encoder_out = encoder_out.permute(1, 0, 2)
@@ -959,7 +983,9 @@ class OnnxStreamingEncoder(nn.Module):
         return encoder_out, new_states
 
     def get_init_states(
-        self, batch_size: int = 1, device: torch.device = torch.device("cpu"),
+        self,
+        batch_size: int = 1,
+        device: torch.device = torch.device("cpu"),
     ) -> List[torch.Tensor]:
         states = self.encoder.get_init_states(batch_size, device)
         embed_states = self.encoder_embed.get_init_states(batch_size, device)
@@ -1005,7 +1031,8 @@ def export_onnx_streaming_transducer(params, model):
     dynamic_batch = params.dynamic_batch == 1
 
     meta_data = get_streaming_meta_data(
-        encoder, "streaming zipformer2",
+        encoder,
+        "streaming zipformer2",
         use_whisper_features=params.use_whisper_features,
     )
     logging.info(f"meta_data: {meta_data}")
@@ -1016,17 +1043,23 @@ def export_onnx_streaming_transducer(params, model):
     else:
         encoder_filename = params.exp_dir / f"encoder-{suffix}.onnx"
     export_streaming_encoder_onnx(
-        encoder, str(encoder_filename), opset_version=opset_version,
-        feature_dim=params.feature_dim, dynamic_batch=dynamic_batch,
+        encoder,
+        str(encoder_filename),
+        opset_version=opset_version,
+        feature_dim=params.feature_dim,
+        dynamic_batch=dynamic_batch,
         use_external_data=params.use_external_data,
-        output_name="encoder_out", meta_data=meta_data,
+        output_name="encoder_out",
+        meta_data=meta_data,
     )
     logging.info(f"Exported encoder to {encoder_filename}")
 
     logging.info("Exporting decoder")
     decoder_filename = params.exp_dir / f"decoder-{suffix}.onnx"
     _export_decoder_model_onnx(
-        decoder, decoder_filename, opset_version=opset_version,
+        decoder,
+        decoder_filename,
+        opset_version=opset_version,
         dynamic_batch=dynamic_batch,
     )
     logging.info(f"Exported decoder to {decoder_filename}")
@@ -1034,7 +1067,9 @@ def export_onnx_streaming_transducer(params, model):
     logging.info("Exporting joiner")
     joiner_filename = params.exp_dir / f"joiner-{suffix}.onnx"
     _export_joiner_model_onnx(
-        joiner, joiner_filename, opset_version=opset_version,
+        joiner,
+        joiner_filename,
+        opset_version=opset_version,
         dynamic_batch=dynamic_batch,
     )
     logging.info(f"Exported joiner to {joiner_filename}")
@@ -1110,7 +1145,9 @@ class OnnxStreamingCtcModel(nn.Module):
 
         cached_embed_left_pad = states[-2]
         x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=x, x_lens=x_lens, cached_left_pad=cached_embed_left_pad,
+            x=x,
+            x_lens=x_lens,
+            cached_left_pad=cached_embed_left_pad,
         )
         assert x.size(1) == self.chunk_size, (x.size(1), self.chunk_size)
 
@@ -1132,7 +1169,9 @@ class OnnxStreamingCtcModel(nn.Module):
             encoder_out_lens,
             new_encoder_states,
         ) = self.encoder.streaming_forward(
-            x=x, x_lens=x_lens, states=encoder_states,
+            x=x,
+            x_lens=x_lens,
+            states=encoder_states,
             src_key_padding_mask=src_key_padding_mask,
         )
         encoder_out = encoder_out.permute(1, 0, 2)
@@ -1145,7 +1184,9 @@ class OnnxStreamingCtcModel(nn.Module):
         return encoder_out, new_states
 
     def get_init_states(
-        self, batch_size: int = 1, device: torch.device = torch.device("cpu"),
+        self,
+        batch_size: int = 1,
+        device: torch.device = torch.device("cpu"),
     ) -> List[torch.Tensor]:
         states = self.encoder.get_init_states(batch_size, device)
         embed_states = self.encoder_embed.get_init_states(batch_size, device)
@@ -1180,7 +1221,8 @@ def export_onnx_streaming_ctc(params, model):
     dynamic_batch = params.dynamic_batch == 1
 
     meta_data = get_streaming_meta_data(
-        ctc_model, "streaming ctc zipformer2",
+        ctc_model,
+        "streaming ctc zipformer2",
         use_whisper_features=params.use_whisper_features,
     )
     logging.info(f"meta_data: {meta_data}")
@@ -1192,10 +1234,14 @@ def export_onnx_streaming_ctc(params, model):
         model_filename = params.exp_dir / f"ctc-{suffix}.onnx"
 
     export_streaming_encoder_onnx(
-        ctc_model, str(model_filename), opset_version=opset_version,
-        feature_dim=params.feature_dim, dynamic_batch=dynamic_batch,
+        ctc_model,
+        str(model_filename),
+        opset_version=opset_version,
+        feature_dim=params.feature_dim,
+        dynamic_batch=dynamic_batch,
         use_external_data=params.use_external_data,
-        output_name="log_probs", meta_data=meta_data,
+        output_name="log_probs",
+        meta_data=meta_data,
     )
     logging.info(f"Exported model to {model_filename}")
 
@@ -1239,8 +1285,7 @@ def load_model_checkpoint(params, model, device, strict=True):
             ]
             if len(filenames) == 0:
                 raise ValueError(
-                    f"No checkpoints found for"
-                    f" --iter {params.iter}, --avg {params.avg}"
+                    f"No checkpoints found for --iter {params.iter}, --avg {params.avg}"
                 )
             elif len(filenames) < params.avg:
                 raise ValueError(
@@ -1272,8 +1317,7 @@ def load_model_checkpoint(params, model, device, strict=True):
             ]
             if len(filenames) == 0:
                 raise ValueError(
-                    f"No checkpoints found for"
-                    f" --iter {params.iter}, --avg {params.avg}"
+                    f"No checkpoints found for --iter {params.iter}, --avg {params.avg}"
                 )
             elif len(filenames) < params.avg + 1:
                 raise ValueError(

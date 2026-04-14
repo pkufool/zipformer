@@ -77,12 +77,18 @@ class AttentionDecoderModel(nn.Module):
             ignore_index=ignore_id, label_smoothing=label_smoothing, reduction="none"
         )
 
-    def _pre_ys_in_out(self, ys: List[List[int]], device: Optional[torch.device] = None):
+    def _pre_ys_in_out(
+        self, ys: List[List[int]], device: Optional[torch.device] = None
+    ):
         """Prepare ys_in_pad and ys_out_pad."""
         # [B, S+1], start with SOS
-        ys_in_pad, ys_in_lens = pad_sequences(ys, padding_value=self.eos_id, sos_id=self.sos_id, device=device)
+        ys_in_pad, ys_in_lens = pad_sequences(
+            ys, padding_value=self.eos_id, sos_id=self.sos_id, device=device
+        )
         # [B, S+1], end with EOS
-        ys_out_pad, _ = pad_sequences(ys, padding_value=self.ignore_id, eos_id=self.eos_id, device=device)
+        ys_out_pad, _ = pad_sequences(
+            ys, padding_value=self.ignore_id, eos_id=self.eos_id, device=device
+        )
         return ys_in_pad, ys_in_lens, ys_out_pad
 
     def calc_att_loss(
@@ -100,7 +106,9 @@ class AttentionDecoderModel(nn.Module):
 
         Return: The attention-decoder loss.
         """
-        ys_in_pad, ys_in_lens, ys_out_pad = self._pre_ys_in_out(ys, device=encoder_out.device)
+        ys_in_pad, ys_in_lens, ys_out_pad = self._pre_ys_in_out(
+            ys, device=encoder_out.device
+        )
 
         # decoder forward
         decoder_out = self.decoder(
@@ -132,7 +140,9 @@ class AttentionDecoderModel(nn.Module):
 
         Return: A tensor of shape (batch, num_tokens).
         """
-        ys_in_pad, ys_in_lens, ys_out_pad = self._pre_ys_in_out(ys, device=encoder_out.device)
+        ys_in_pad, ys_in_lens, ys_out_pad = self._pre_ys_in_out(
+            ys, device=encoder_out.device
+        )
 
         # decoder forward
         decoder_out = self.decoder(

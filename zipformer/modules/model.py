@@ -23,7 +23,13 @@ import torch
 import torch.nn as nn
 from lhotse.dataset import SpecAugment
 from zipformer.modules.scaling import ScaledLinear
-from zipformer.utils.utils import add_sos, make_pad_mask, time_warp, torch_autocast, pad_sequences
+from zipformer.utils.utils import (
+    add_sos,
+    make_pad_mask,
+    time_warp,
+    torch_autocast,
+    pad_sequences,
+)
 from .decoder import Decoder
 from .joiner import Joiner
 from .attention_decoder import AttentionDecoderModel
@@ -109,9 +115,9 @@ class AsrModel(nn.Module):
         """
         super().__init__()
 
-        assert (
-            use_transducer or use_ctc
-        ), f"At least one of them should be True, but got use_transducer={use_transducer}, use_ctc={use_ctc}"
+        assert use_transducer or use_ctc, (
+            f"At least one of them should be True, but got use_transducer={use_transducer}, use_ctc={use_ctc}"
+        )
 
         self.blank_id = blank_id
         self.vocab_size = vocab_size
@@ -342,7 +348,9 @@ class AsrModel(nn.Module):
         # Now for the decoder, i.e., the prediction network
         blank_id = self.blank_id
         # sos_y_padded: [B, S + 1], start with SOS.
-        sos_y_padded, _ = pad_sequences(y, padding_value=blank_id, sos_id=blank_id, device=encoder_out.device)
+        sos_y_padded, _ = pad_sequences(
+            y, padding_value=blank_id, sos_id=blank_id, device=encoder_out.device
+        )
         # decoder_out: [B, S + 1, decoder_dim]
         decoder_out = self.decoder(sos_y_padded)
 
@@ -513,7 +521,9 @@ class AsrModel(nn.Module):
 
         if self.use_ctc:
             # Compute CTC loss
-            targets, target_length = pad_sequences(y, padding_value=0, device=encoder_out.device)
+            targets, target_length = pad_sequences(
+                y, padding_value=0, device=encoder_out.device
+            )
             if not use_cr_ctc:
                 ctc_loss = self.forward_ctc(
                     encoder_out=encoder_out,

@@ -67,7 +67,6 @@ It will generate the following 3 files inside $repo/exp:
   --tokens $repo/data/lang_bpe_500/tokens.txt \
 """
 
-
 import argparse
 import logging
 import time
@@ -265,9 +264,9 @@ def main():
     LibriSpeechAsrDataModule.add_arguments(parser)
     args = parser.parse_args()
 
-    assert (
-        args.decoding_method == "greedy_search"
-    ), "Only supports greedy_search currently."
+    assert args.decoding_method == "greedy_search", (
+        "Only supports greedy_search currently."
+    )
     res_dir = Path(args.exp_dir) / f"onnx-{args.decoding_method}"
 
     setup_logger(f"{res_dir}/log-decode")

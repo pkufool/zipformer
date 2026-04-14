@@ -199,9 +199,8 @@ def get_parser():
         "--skip-scoring",
         type=str2bool,
         default=False,
-        help="""Skip scoring, but still save the ASR output (for eval sets)."""
+        help="""Skip scoring, but still save the ASR output (for eval sets).""",
     )
-
 
     add_model_arguments(parser)
 
@@ -389,7 +388,11 @@ def streaming_forward(
     Returns encoder outputs, output lengths, and updated states.
     """
     cached_embed_left_pad = states[-2]
-    (x, x_lens, new_cached_embed_left_pad,) = model.encoder_embed.streaming_forward(
+    (
+        x,
+        x_lens,
+        new_cached_embed_left_pad,
+    ) = model.encoder_embed.streaming_forward(
         x=features,
         x_lens=feature_lens,
         cached_left_pad=cached_embed_left_pad,
@@ -595,9 +598,9 @@ def decode_dataset(
         # - this is to avoid sending [-32k,+32k] signal in...
         # - some lhotse AudioTransform classes can make the signal
         #   be out of range [-1, 1], hence the tolerance 10
-        assert (
-            np.abs(audio).max() <= 10
-        ), "Should be normalized to [-1, 1], 10 for tolerance..."
+        assert np.abs(audio).max() <= 10, (
+            "Should be normalized to [-1, 1], 10 for tolerance..."
+        )
 
         samples = torch.from_numpy(audio).squeeze(0)
 
@@ -671,6 +674,7 @@ def save_asr_output(
         store_transcripts(filename=recogs_filename, texts=results)
         logging.info(f"The transcripts are stored in {recogs_filename}")
 
+
 def save_wer_results(
     params: AttributeDict,
     test_set_name: str,
@@ -681,7 +685,6 @@ def save_wer_results(
     """
     test_set_wers = dict()
     for key, results in results_dict.items():
-
         # The following prints out WERs, per-word error statistics and aligned
         # ref/hyp pairs.
         errs_filename = (
@@ -724,7 +727,7 @@ def main():
     params.update(vars(args))
 
     # enable AudioCache
-    set_caching_enabled(True) # lhotse
+    set_caching_enabled(True)  # lhotse
 
     params.res_dir = params.exp_dir / "streaming" / params.decoding_method
 
@@ -735,9 +738,9 @@ def main():
 
     assert params.causal, params.causal
     assert "," not in params.chunk_size, "chunk_size should be one value in decoding."
-    assert (
-        "," not in params.left_context_frames
-    ), "left_context_frames should be one value in decoding."
+    assert "," not in params.left_context_frames, (
+        "left_context_frames should be one value in decoding."
+    )
     params.suffix += f"_chunk-{params.chunk_size}"
     params.suffix += f"_left-context-{params.left_context_frames}"
 
@@ -782,8 +785,7 @@ def main():
             ]
             if len(filenames) == 0:
                 raise ValueError(
-                    f"No checkpoints found for"
-                    f" --iter {params.iter}, --avg {params.avg}"
+                    f"No checkpoints found for --iter {params.iter}, --avg {params.avg}"
                 )
             elif len(filenames) < params.avg:
                 raise ValueError(
@@ -811,8 +813,7 @@ def main():
             ]
             if len(filenames) == 0:
                 raise ValueError(
-                    f"No checkpoints found for"
-                    f" --iter {params.iter}, --avg {params.avg}"
+                    f"No checkpoints found for --iter {params.iter}, --avg {params.avg}"
                 )
             elif len(filenames) < params.avg + 1:
                 raise ValueError(
@@ -880,13 +881,11 @@ def main():
             decoding_graph=decoding_graph,
         )
 
-
         save_asr_output(
             params=params,
             test_set_name=test_set,
             results_dict=results_dict,
         )
-
 
         if not params.skip_scoring:
             save_wer_results(

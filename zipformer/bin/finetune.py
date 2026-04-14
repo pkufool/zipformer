@@ -52,7 +52,6 @@ export CUDA_VISIBLE_DEVICES="0,1,2,3"
 
 """
 
-
 import argparse
 import copy
 import logging
@@ -413,7 +412,7 @@ def get_parser():
         "--context-size",
         type=int,
         default=2,
-        help="The context size in the decoder. 1 means bigram; " "2 means tri-gram",
+        help="The context size in the decoder. 1 means bigram; 2 means tri-gram",
     )
 
     parser.add_argument(
@@ -436,7 +435,7 @@ def get_parser():
         "--am-scale",
         type=float,
         default=0.0,
-        help="The scale to smooth the loss with am (output of encoder network)" "part.",
+        help="The scale to smooth the loss with am (output of encoder network)part.",
     )
 
     parser.add_argument(
@@ -723,7 +722,7 @@ def load_checkpoint_if_available(
     if params.start_batch > 0:
         filename = params.exp_dir / f"checkpoint-{params.start_batch}.pt"
     elif params.start_epoch > 1:
-        filename = params.exp_dir / f"epoch-{params.start_epoch-1}.pt"
+        filename = params.exp_dir / f"epoch-{params.start_epoch - 1}.pt"
     else:
         return None
 
@@ -1168,7 +1167,7 @@ def train_one_epoch(
                     f"Validation on {valid_set}: Epoch {params.cur_epoch}, validation: {valid_info}"
                 )
                 logging.info(
-                    f"Maximum memory allocated so far is {torch.cuda.max_memory_allocated()//1000000}MB"
+                    f"Maximum memory allocated so far is {torch.cuda.max_memory_allocated() // 1000000}MB"
                 )
                 if tb_writer is not None:
                     valid_info.write_summary(
@@ -1497,7 +1496,7 @@ def scan_pessimistic_batches_for_oom(
             display_and_save_batch(batch, params=params, sp=sp)
             raise
         logging.info(
-            f"Maximum memory allocated so far is {torch.cuda.max_memory_allocated()//1000000}MB"
+            f"Maximum memory allocated so far is {torch.cuda.max_memory_allocated() // 1000000}MB"
         )
 
 

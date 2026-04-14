@@ -201,16 +201,14 @@ def read_sound_files(
     ans = []
     for f in filenames:
         wave, sample_rate = torchaudio.load(f)
-        assert (
-            sample_rate == expected_sample_rate
-        ), f"expected sample rate: {expected_sample_rate}. Given: {sample_rate}"
+        assert sample_rate == expected_sample_rate, (
+            f"expected sample rate: {expected_sample_rate}. Given: {sample_rate}"
+        )
         ans.append(wave[0].contiguous())
     return ans
 
 
-def get_audio_durations(
-    filenames: List[str], sample_rate: int
-) -> List[float]:
+def get_audio_durations(filenames: List[str], sample_rate: int) -> List[float]:
     """Get duration in seconds for each audio file."""
     durations = []
     for f in filenames:
@@ -303,15 +301,18 @@ class OnnxTransducerModel:
         session_opts.intra_op_num_threads = 4
 
         self.encoder = ort.InferenceSession(
-            encoder_filename, sess_options=session_opts,
+            encoder_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
         self.decoder = ort.InferenceSession(
-            decoder_filename, sess_options=session_opts,
+            decoder_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
         self.joiner = ort.InferenceSession(
-            joiner_filename, sess_options=session_opts,
+            joiner_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
 
@@ -322,8 +323,10 @@ class OnnxTransducerModel:
     def run_encoder(self, x, x_lens):
         out = self.encoder.run(
             [self.encoder.get_outputs()[0].name, self.encoder.get_outputs()[1].name],
-            {self.encoder.get_inputs()[0].name: x.numpy(),
-             self.encoder.get_inputs()[1].name: x_lens.numpy()},
+            {
+                self.encoder.get_inputs()[0].name: x.numpy(),
+                self.encoder.get_inputs()[1].name: x_lens.numpy(),
+            },
         )
         return torch.from_numpy(out[0]), torch.from_numpy(out[1])
 
@@ -337,8 +340,10 @@ class OnnxTransducerModel:
     def run_joiner(self, encoder_out, decoder_out):
         out = self.joiner.run(
             [self.joiner.get_outputs()[0].name],
-            {self.joiner.get_inputs()[0].name: encoder_out.numpy(),
-             self.joiner.get_inputs()[1].name: decoder_out.numpy()},
+            {
+                self.joiner.get_inputs()[0].name: encoder_out.numpy(),
+                self.joiner.get_inputs()[1].name: decoder_out.numpy(),
+            },
         )[0]
         return torch.from_numpy(out)
 
@@ -354,15 +359,18 @@ class OnnxCtcModel:
         session_opts.intra_op_num_threads = 1
 
         self.model = ort.InferenceSession(
-            nn_model, sess_options=session_opts,
+            nn_model,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
 
     def __call__(self, x, x_lens):
         out = self.model.run(
             [self.model.get_outputs()[0].name, self.model.get_outputs()[1].name],
-            {self.model.get_inputs()[0].name: x.numpy(),
-             self.model.get_inputs()[1].name: x_lens.numpy()},
+            {
+                self.model.get_inputs()[0].name: x.numpy(),
+                self.model.get_inputs()[1].name: x_lens.numpy(),
+            },
         )
         return torch.from_numpy(out[0]), torch.from_numpy(out[1])
 
@@ -378,15 +386,18 @@ class OnnxStreamingTransducerModel:
         session_opts.intra_op_num_threads = 1
 
         self.encoder = ort.InferenceSession(
-            encoder_filename, sess_options=session_opts,
+            encoder_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
         self.decoder = ort.InferenceSession(
-            decoder_filename, sess_options=session_opts,
+            decoder_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
         self.joiner = ort.InferenceSession(
-            joiner_filename, sess_options=session_opts,
+            joiner_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
 
@@ -422,10 +433,19 @@ class OnnxStreamingTransducerModel:
 
             for _ in range(num_encoder_layers[i]):
                 self.states += [
-                    np.zeros((left_context_len[i], batch_size, key_dim), dtype=np.float32),
-                    np.zeros((1, batch_size, left_context_len[i], nonlin_attn_head_dim), dtype=np.float32),
-                    np.zeros((left_context_len[i], batch_size, value_dim), dtype=np.float32),
-                    np.zeros((left_context_len[i], batch_size, value_dim), dtype=np.float32),
+                    np.zeros(
+                        (left_context_len[i], batch_size, key_dim), dtype=np.float32
+                    ),
+                    np.zeros(
+                        (1, batch_size, left_context_len[i], nonlin_attn_head_dim),
+                        dtype=np.float32,
+                    ),
+                    np.zeros(
+                        (left_context_len[i], batch_size, value_dim), dtype=np.float32
+                    ),
+                    np.zeros(
+                        (left_context_len[i], batch_size, value_dim), dtype=np.float32
+                    ),
                     np.zeros((batch_size, embed_dim, conv_left_pad), dtype=np.float32),
                     np.zeros((batch_size, embed_dim, conv_left_pad), dtype=np.float32),
                 ]
@@ -440,10 +460,17 @@ class OnnxStreamingTransducerModel:
         encoder_output = ["encoder_out"]
 
         for i in range(len(self.states[:-2]) // 6):
-            tensors = self.states[i * 6: (i + 1) * 6]
-            for j, prefix in enumerate(["cached_key", "cached_nonlin_attn",
-                                        "cached_val1", "cached_val2",
-                                        "cached_conv1", "cached_conv2"]):
+            tensors = self.states[i * 6 : (i + 1) * 6]
+            for j, prefix in enumerate(
+                [
+                    "cached_key",
+                    "cached_nonlin_attn",
+                    "cached_val1",
+                    "cached_val2",
+                    "cached_conv1",
+                    "cached_conv2",
+                ]
+            ):
                 name = f"{prefix}_{i}"
                 encoder_input[name] = tensors[j]
                 encoder_output.append(f"new_{name}")
@@ -471,8 +498,10 @@ class OnnxStreamingTransducerModel:
     def run_joiner(self, encoder_out, decoder_out):
         out = self.joiner.run(
             [self.joiner.get_outputs()[0].name],
-            {self.joiner.get_inputs()[0].name: encoder_out.numpy(),
-             self.joiner.get_inputs()[1].name: decoder_out.numpy()},
+            {
+                self.joiner.get_inputs()[0].name: encoder_out.numpy(),
+                self.joiner.get_inputs()[1].name: decoder_out.numpy(),
+            },
         )[0]
         return torch.from_numpy(out)
 
@@ -488,7 +517,8 @@ class OnnxStreamingCtcModel:
         session_opts.intra_op_num_threads = 1
 
         self.model = ort.InferenceSession(
-            model_filename, sess_options=session_opts,
+            model_filename,
+            sess_options=session_opts,
             providers=["CPUExecutionProvider"],
         )
         self._init_states()
@@ -519,10 +549,19 @@ class OnnxStreamingCtcModel:
 
             for _ in range(num_encoder_layers[i]):
                 self.states += [
-                    np.zeros((left_context_len[i], batch_size, key_dim), dtype=np.float32),
-                    np.zeros((1, batch_size, left_context_len[i], nonlin_attn_head_dim), dtype=np.float32),
-                    np.zeros((left_context_len[i], batch_size, value_dim), dtype=np.float32),
-                    np.zeros((left_context_len[i], batch_size, value_dim), dtype=np.float32),
+                    np.zeros(
+                        (left_context_len[i], batch_size, key_dim), dtype=np.float32
+                    ),
+                    np.zeros(
+                        (1, batch_size, left_context_len[i], nonlin_attn_head_dim),
+                        dtype=np.float32,
+                    ),
+                    np.zeros(
+                        (left_context_len[i], batch_size, value_dim), dtype=np.float32
+                    ),
+                    np.zeros(
+                        (left_context_len[i], batch_size, value_dim), dtype=np.float32
+                    ),
                     np.zeros((batch_size, embed_dim, conv_left_pad), dtype=np.float32),
                     np.zeros((batch_size, embed_dim, conv_left_pad), dtype=np.float32),
                 ]
@@ -537,10 +576,17 @@ class OnnxStreamingCtcModel:
         model_output = ["log_probs"]
 
         for i in range(len(self.states[:-2]) // 6):
-            tensors = self.states[i * 6: (i + 1) * 6]
-            for j, prefix in enumerate(["cached_key", "cached_nonlin_attn",
-                                        "cached_val1", "cached_val2",
-                                        "cached_conv1", "cached_conv2"]):
+            tensors = self.states[i * 6 : (i + 1) * 6]
+            for j, prefix in enumerate(
+                [
+                    "cached_key",
+                    "cached_nonlin_attn",
+                    "cached_val1",
+                    "cached_val2",
+                    "cached_conv1",
+                    "cached_conv2",
+                ]
+            ):
                 name = f"{prefix}_{i}"
                 model_input[name] = tensors[j]
                 model_output.append(f"new_{name}")
@@ -569,8 +615,10 @@ def greedy_search_transducer_batch(model, encoder_out, encoder_out_lens):
     assert encoder_out.ndim == 3
 
     packed = torch.nn.utils.rnn.pack_padded_sequence(
-        input=encoder_out, lengths=encoder_out_lens.cpu(),
-        batch_first=True, enforce_sorted=False,
+        input=encoder_out,
+        lengths=encoder_out_lens.cpu(),
+        batch_first=True,
+        enforce_sorted=False,
     )
 
     blank_id = 0
@@ -615,8 +663,10 @@ def greedy_search_transducer_batch_jit(model, encoder_out, encoder_out_lens):
     assert encoder_out.ndim == 3
 
     packed = torch.nn.utils.rnn.pack_padded_sequence(
-        input=encoder_out, lengths=encoder_out_lens.cpu(),
-        batch_first=True, enforce_sorted=False,
+        input=encoder_out,
+        lengths=encoder_out_lens.cpu(),
+        batch_first=True,
+        enforce_sorted=False,
     )
 
     device = encoder_out.device
@@ -626,7 +676,9 @@ def greedy_search_transducer_batch_jit(model, encoder_out, encoder_out_lens):
 
     hyps = [[blank_id] * context_size for _ in range(N)]
     decoder_input = torch.tensor(hyps, device=device, dtype=torch.int64)
-    decoder_out = model.decoder(decoder_input, need_pad=torch.tensor([False])).squeeze(1)
+    decoder_out = model.decoder(decoder_input, need_pad=torch.tensor([False])).squeeze(
+        1
+    )
 
     offset = 0
     for batch_size in packed.batch_sizes.tolist():
@@ -646,8 +698,12 @@ def greedy_search_transducer_batch_jit(model, encoder_out, encoder_out_lens):
                 emitted = True
         if emitted:
             decoder_input = [h[-context_size:] for h in hyps[:batch_size]]
-            decoder_input = torch.tensor(decoder_input, device=device, dtype=torch.int64)
-            decoder_out = model.decoder(decoder_input, need_pad=torch.tensor([False])).squeeze(1)
+            decoder_input = torch.tensor(
+                decoder_input, device=device, dtype=torch.int64
+            )
+            decoder_out = model.decoder(
+                decoder_input, need_pad=torch.tensor([False])
+            ).squeeze(1)
 
     sorted_ans = [h[context_size:] for h in hyps]
     ans = []
@@ -658,7 +714,11 @@ def greedy_search_transducer_batch_jit(model, encoder_out, encoder_out_lens):
 
 
 def greedy_search_transducer_streaming_onnx(
-    model, encoder_out, context_size, decoder_out=None, hyp=None,
+    model,
+    encoder_out,
+    context_size,
+    decoder_out=None,
+    hyp=None,
 ):
     """Streaming greedy search for ONNX transducer. Processes one chunk."""
     blank_id = 0
@@ -671,7 +731,7 @@ def greedy_search_transducer_streaming_onnx(
     encoder_out = encoder_out.squeeze(0)
     T = encoder_out.size(0)
     for t in range(T):
-        cur_encoder_out = encoder_out[t: t + 1]
+        cur_encoder_out = encoder_out[t : t + 1]
         joiner_out = model.run_joiner(cur_encoder_out, decoder_out).squeeze(0)
         y = joiner_out.argmax(dim=0).item()
         if y != blank_id:
@@ -683,7 +743,12 @@ def greedy_search_transducer_streaming_onnx(
 
 
 def greedy_search_transducer_streaming_jit(
-    decoder, joiner, encoder_out, decoder_out=None, hyp=None, device=torch.device("cpu"),
+    decoder,
+    joiner,
+    encoder_out,
+    decoder_out=None,
+    hyp=None,
+    device=torch.device("cpu"),
 ):
     """Streaming greedy search for JIT transducer. Processes one chunk."""
     assert encoder_out.ndim == 2
@@ -697,14 +762,16 @@ def greedy_search_transducer_streaming_jit(
 
     T = encoder_out.size(0)
     for i in range(T):
-        cur_encoder_out = encoder_out[i: i + 1]
+        cur_encoder_out = encoder_out[i : i + 1]
         joiner_out = joiner(cur_encoder_out, decoder_out).squeeze(0)
         y = joiner_out.argmax(dim=0).item()
 
         if y != blank_id:
             hyp.append(y)
             decoder_input = torch.tensor(
-                hyp[-context_size:], dtype=torch.int32, device=device,
+                hyp[-context_size:],
+                dtype=torch.int32,
+                device=device,
             ).unsqueeze(0)
             decoder_out = decoder(decoder_input, torch.tensor([False])).squeeze(1)
 
@@ -730,7 +797,9 @@ def infer_jit(args) -> List[dict]:
     """JIT non-streaming transducer inference."""
     from torch.nn.utils.rnn import pad_sequence
 
-    device = torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
+    device = (
+        torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
+    )
     model = torch.jit.load(args.nn_model_filename)
     model.eval()
     model.to(device)
@@ -745,7 +814,8 @@ def infer_jit(args) -> List[dict]:
     feature_lengths = torch.tensor(feature_lengths, device=device)
 
     encoder_out, encoder_out_lens = model.encoder(
-        features=features, feature_lengths=feature_lengths,
+        features=features,
+        feature_lengths=feature_lengths,
     )
 
     hyps = greedy_search_transducer_batch_jit(model, encoder_out, encoder_out_lens)
@@ -768,7 +838,9 @@ def infer_jit_streaming(args) -> List[dict]:
     torch._C._jit_set_profiling_mode(False)
     torch._C._set_graph_executor_optimize(False)
 
-    device = torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
+    device = (
+        torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
+    )
     model = torch.jit.load(args.nn_model_filename)
     model.eval()
     model.to(device)
@@ -805,7 +877,9 @@ def infer_jit_streaming(args) -> List[dict]:
             samples = wave_samples[start:end]
             start += chunk
 
-            online_fbank.accept_waveform(sampling_rate=args.sample_rate, waveform=samples)
+            online_fbank.accept_waveform(
+                sampling_rate=args.sample_rate, waveform=samples
+            )
 
             while online_fbank.num_frames_ready - num_processed_frames >= T:
                 frames = []
@@ -814,19 +888,28 @@ def infer_jit_streaming(args) -> List[dict]:
                 frames = torch.cat(frames, dim=0).to(device).unsqueeze(0)
                 x_lens = torch.tensor([T], dtype=torch.int32, device=device)
                 encoder_out, out_lens, states = encoder(
-                    features=frames, feature_lengths=x_lens, states=states,
+                    features=frames,
+                    feature_lengths=x_lens,
+                    states=states,
                 )
                 num_processed_frames += chunk_length
 
                 hyp, decoder_out = greedy_search_transducer_streaming_jit(
-                    decoder, joiner, encoder_out.squeeze(0), decoder_out, hyp, device=device,
+                    decoder,
+                    joiner,
+                    encoder_out.squeeze(0),
+                    decoder_out,
+                    hyp,
+                    device=device,
                 )
 
         if hyp is not None:
             text = token_ids_to_text(hyp[context_size:], token_table)
         else:
             text = ""
-        results.append({"filename": sound_file, "text": text, "duration": durations[idx]})
+        results.append(
+            {"filename": sound_file, "text": text, "duration": durations[idx]}
+        )
 
     return results
 
@@ -836,7 +919,9 @@ def infer_onnx(args) -> List[dict]:
     from torch.nn.utils.rnn import pad_sequence
 
     model = OnnxTransducerModel(
-        args.encoder_model_filename, args.decoder_model_filename, args.joiner_model_filename,
+        args.encoder_model_filename,
+        args.decoder_model_filename,
+        args.joiner_model_filename,
     )
 
     fbank = create_fbank(args.sample_rate)
@@ -882,20 +967,26 @@ def infer_onnx_ctc(args) -> List[dict]:
 
     results = []
     for i in range(log_probs.size(0)):
-        indexes = log_probs[i, :log_probs_len[i]].argmax(dim=-1)
+        indexes = log_probs[i, : log_probs_len[i]].argmax(dim=-1)
         token_ids = torch.unique_consecutive(indexes)
         token_ids = token_ids[token_ids != blank_id].tolist()
         text = token_ids_to_text(token_ids, token_table)
-        results.append({
-            "filename": args.sound_files[i], "text": text, "duration": durations[i],
-        })
+        results.append(
+            {
+                "filename": args.sound_files[i],
+                "text": text,
+                "duration": durations[i],
+            }
+        )
     return results
 
 
 def infer_onnx_streaming(args) -> List[dict]:
     """ONNX streaming transducer inference."""
     model = OnnxStreamingTransducerModel(
-        args.encoder_model_filename, args.decoder_model_filename, args.joiner_model_filename,
+        args.encoder_model_filename,
+        args.decoder_model_filename,
+        args.joiner_model_filename,
     )
 
     token_table = load_token_table(args.tokens)
@@ -935,14 +1026,20 @@ def infer_onnx_streaming(args) -> List[dict]:
                 frames = torch.cat(frames, dim=0).unsqueeze(0)
                 encoder_out = model.run_encoder(frames)
                 hyp, decoder_out = greedy_search_transducer_streaming_onnx(
-                    model, encoder_out, context_size, decoder_out, hyp,
+                    model,
+                    encoder_out,
+                    context_size,
+                    decoder_out,
+                    hyp,
                 )
 
         if hyp is not None:
             text = token_ids_to_text(hyp[context_size:], token_table)
         else:
             text = ""
-        results.append({"filename": sound_file, "text": text, "duration": durations[idx]})
+        results.append(
+            {"filename": sound_file, "text": text, "duration": durations[idx]}
+        )
 
     return results
 
@@ -987,7 +1084,9 @@ def infer_onnx_streaming_ctc(args) -> List[dict]:
                 hyp += greedy_search_ctc(log_probs)
 
         text = token_ids_to_text_bpe(hyp, args.tokens)
-        results.append({"filename": sound_file, "text": text, "duration": durations[idx]})
+        results.append(
+            {"filename": sound_file, "text": text, "duration": durations[idx]}
+        )
 
     return results
 

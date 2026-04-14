@@ -31,7 +31,6 @@ from tqdm import tqdm
 
 from functools import partial
 
-import k2
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
@@ -45,13 +44,21 @@ from ssentencepiece import Ssentencepiece
 from zipformer.modules.model import AsrModel
 from zipformer.modules import optim
 from zipformer.modules.optim import Eden, ScaledAdam
-from zipformer.utils.checkpoint import load_checkpoint, remove_checkpoints, save_checkpoint_with_global_batch_idx, update_averaged_model
+from zipformer.utils.checkpoint import (
+    load_checkpoint,
+    remove_checkpoints,
+    save_checkpoint_with_global_batch_idx,
+    update_averaged_model,
+)
 from zipformer.utils.checkpoint import save_checkpoint as save_checkpoint_impl
 
 from zipformer.utils.hooks import register_inf_check_hooks
 from zipformer.utils import diagnostics
 from zipformer.utils.utils import (
-    cleanup_dist, setup_dist, get_env_info, raise_grad_scale_is_too_small_error,
+    cleanup_dist,
+    setup_dist,
+    get_env_info,
+    raise_grad_scale_is_too_small_error,
     AttributeDict,
     MetricsTracker,
     get_parameter_groups_with_lrs,
@@ -74,9 +81,9 @@ def get_adjusted_batch_count(params: AttributeDict) -> float:
     )
 
 
-def set_batch_count(model: Union[nn.Module, DDP], batch_count: float) -> None:
+def set_batch_count(model: Union[torch.nn.Module, DDP], batch_count: float) -> None:
     if isinstance(model, DDP):
-        # get underlying nn.Module
+        # get underlying torch.nn.Module
         model = model.module
     for name, module in model.named_modules():
         if hasattr(module, "batch_count"):
@@ -720,7 +727,8 @@ def get_params() -> AttributeDict:
 
     return params
 
-def get_model(params: AttributeDict) -> nn.Module:
+
+def get_model(params: AttributeDict) -> torch.nn.Module:
     model = AsrModel(
         feature_dim=params.feature_dim,
         downsampling_factor=params.downsampling_factor,
@@ -778,8 +786,8 @@ def get_spec_augment(params: AttributeDict) -> SpecAugment:
 
 def load_checkpoint_if_available(
     params: AttributeDict,
-    model: nn.Module,
-    model_avg: nn.Module = None,
+    model: torch.nn.Module,
+    model_avg: torch.nn.Module = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -811,7 +819,7 @@ def load_checkpoint_if_available(
     if params.start_batch > 0:
         filename = params.exp_dir / f"checkpoint-{params.start_batch}.pt"
     elif params.start_epoch > 1:
-        filename = params.exp_dir / f"epoch-{params.start_epoch-1}.pt"
+        filename = params.exp_dir / f"epoch-{params.start_epoch - 1}.pt"
     else:
         return None
 
@@ -845,7 +853,7 @@ def load_checkpoint_if_available(
 def save_checkpoint(
     params: AttributeDict,
     model: Union[nn.Module, DDP],
-    model_avg: Optional[nn.Module] = None,
+    model_avg: Optional[torch.nn.Module] = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
     scaler: Optional[GradScaler] = None,
@@ -890,7 +898,7 @@ def save_checkpoint(
 
 def compute_loss(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     sp: Ssentencepiece,
     batch: dict,
     is_training: bool,
@@ -1003,7 +1011,7 @@ def compute_loss(
 
 def compute_validation_loss(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     sp: Ssentencepiece,
     valid_dl: torch.utils.data.DataLoader,
     world_size: int = 1,
@@ -1037,7 +1045,7 @@ def compute_validation_loss(
 
 def train_one_epoch(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     optimizer: torch.optim.Optimizer,
     scheduler: LRSchedulerType,
     sp: Ssentencepiece,
@@ -1045,7 +1053,7 @@ def train_one_epoch(
     valid_dl: torch.utils.data.DataLoader,
     scaler: GradScaler,
     spec_augment: Optional[SpecAugment] = None,
-    model_avg: Optional[nn.Module] = None,
+    model_avg: Optional[torch.nn.Module] = None,
     tb_writer: Optional[SummaryWriter] = None,
     world_size: int = 1,
     rank: int = 0,
@@ -1111,8 +1119,8 @@ def train_one_epoch(
         batch_size = len(batch["ids"])
 
         try:
-            with torch.amp.autocast("cuda",
-                enabled=params.use_autocast, dtype=params.dtype
+            with torch.amp.autocast(
+                "cuda", enabled=params.use_autocast, dtype=params.dtype
             ):
                 loss, loss_info = compute_loss(
                     params=params,
@@ -1247,7 +1255,7 @@ def train_one_epoch(
             model.train()
             logging.info(f"Epoch {params.cur_epoch}, validation: {valid_info}")
             logging.info(
-                f"Maximum memory allocated so far is {torch.cuda.max_memory_allocated()//1000000}MB"
+                f"Maximum memory allocated so far is {torch.cuda.max_memory_allocated() // 1000000}MB"
             )
             if tb_writer is not None:
                 valid_info.write_summary(
@@ -1357,7 +1365,7 @@ def run(local_rank, world_size, args):
         spec_augment = None
 
     assert params.save_every_n >= params.average_period
-    model_avg: Optional[nn.Module] = None
+    model_avg: Optional[torch.nn.Module] = None
     if global_rank == 0:
         model_avg = copy.deepcopy(model).to(torch.float64)
 
@@ -1402,9 +1410,9 @@ def run(local_rank, world_size, args):
 
     training_sets = params.training_sets
     training_weights = None
-    assert (
-        training_sets is not None and len(training_sets) > 0
-    ), "training_sets must be provided"
+    assert training_sets is not None and len(training_sets) > 0, (
+        "training_sets must be provided"
+    )
     if params.training_weights is not None:
         training_weights = list(map(float, params.training_weights.split(",")))
         assert len(training_weights) == len(training_sets)

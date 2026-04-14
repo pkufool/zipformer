@@ -1678,7 +1678,10 @@ def _test_whiten():
         x.requires_grad = True
 
         m = Whiten(
-            1, 5.0, prob=1.0, grad_scale=0.1  # num_groups  # whitening_limit,
+            1,
+            5.0,
+            prob=1.0,
+            grad_scale=0.1,  # num_groups  # whitening_limit,
         )  # grad_scale
 
         for _ in range(4):
@@ -1888,9 +1891,7 @@ def _test_activation_dropout_and_linear():
 
                 def isclose(a, b):
                     # return true if cosine similarity is > 0.9.
-                    return (a * b).sum() > 0.9 * (
-                        (a**2).sum() * (b**2).sum()
-                    ).sqrt()
+                    return (a * b).sum() > 0.9 * ((a**2).sum() * (b**2).sum()).sqrt()
 
                 # the SwooshL() implementation has a noisy gradient due to 1-byte
                 # storage of it.

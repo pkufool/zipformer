@@ -6,14 +6,14 @@ import os
 import pathlib
 import random
 import warnings
+import re
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, TextIO, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
 
-import k2
 import kaldialign
 import torch
 import torch.distributed as dist
@@ -25,17 +25,7 @@ from torch.utils.tensorboard import SummaryWriter
 import socket
 import subprocess
 import sys
-from pathlib import Path
-from typing import Any, Dict
 
-import k2
-import k2.version
-import lhotse
-import torch
-
-import os
-
-import torch
 from torch import distributed as dist
 
 Pathlike = Union[str, Path]
@@ -123,9 +113,6 @@ class AttributeDict(dict):
                 v = str(v)
             tmp[k] = v
         return json.dumps(tmp, indent=indent, sort_keys=True)
-
-
-
 
 
 def store_transcripts(
@@ -242,6 +229,20 @@ class MetricsTracker(collections.defaultdict):
             tb_writer.add_scalar(prefix + k, v, batch_idx)
 
 
+# `is_module_available` is copied from
+# https://github.com/pytorch/audio/blob/6bad3a66a7a1c7cc05755e9ee5931b7391d2b94c/torchaudio/_internal/module_utils.py#L9
+def is_module_available(*modules: str) -> bool:
+    r"""Returns if a top-level module with :attr:`name` exists *without**
+    importing it. This is generally safer than try-catch block around a
+    `import X`.
+
+    Note: "borrowed" from torchaudio:
+    """
+    import importlib
+
+    return all(importlib.util.find_spec(m) is not None for m in modules)
+
+
 def make_pad_mask(
     lengths: torch.Tensor, max_len: int = 0, pad_left: bool = False
 ) -> torch.Tensor:
@@ -303,9 +304,9 @@ def time_warp(
 ):
     if time_warp_factor is None or time_warp_factor < 1:
         return features
-    assert (
-        len(features.shape) == 3
-    ), f"SpecAugment only supports 3D tensors: {features.shape}"
+    assert len(features.shape) == 3, (
+        f"SpecAugment only supports 3D tensors: {features.shape}"
+    )
     features = features.clone()
     if supervision_segments is None:
         for sequence_idx in range(features.size(0)):
@@ -562,3 +563,15 @@ def pad_sequences(
             out[i, len(s) + (1 if sos_id is not None else 0)] = eos_id
     out_lens = torch.tensor(seq_lens, dtype=torch.int64, device=device)
     return out, out_lens
+
+
+def tokenize_by_cjk_char(line: str) -> List[str]:
+    pattern = re.compile(
+        r"([\u1100-\u11ff\u2e80-\ua4cf\ua840-\uD7AF\uF900-\uFAFF\uFE30-\uFE4F\uFF65-\uFFDC\U00020000-\U0002FFFF])"
+    )
+    chars = pattern.split(line.strip())
+    words: List[str] = []
+    for w in chars:
+        if w.strip():
+            words.extend(w.split())
+    return words

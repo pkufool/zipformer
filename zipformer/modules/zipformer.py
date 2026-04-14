@@ -1343,9 +1343,9 @@ class SimpleDownsample(torch.nn.Module):
         pad = d_seq_len * ds - seq_len
 
         if self.causal and torch.jit.is_tracing():
-            assert (
-                pad == 0
-            ), f"pad should be zero for exporting streaming models. Given {pad}"
+            assert pad == 0, (
+                f"pad should be zero for exporting streaming models. Given {pad}"
+            )
 
         # If we are exporting a streaming model, then we skip the if statement
         if not self.causal or not torch.jit.is_tracing():
@@ -1497,9 +1497,7 @@ class CompactRelPositionalEncoding(torch.nn.Module):
         # length of positive side: x.size(0) + left_context_len
         # length of negative side: x.size(0)
         pos_emb = self.pe[
-            self.pe.size(0) // 2
-            - x_size_left
-            + 1 : self.pe.size(0) // 2  # noqa E203
+            self.pe.size(0) // 2 - x_size_left + 1 : self.pe.size(0) // 2  # noqa E203
             + x.size(0),
             :,
         ]
@@ -2355,9 +2353,9 @@ class ConvolutionModule(nn.Module):
             and chunk_size >= 0
         ):
             # Not support exporting a model for simulated streaming decoding
-            assert (
-                self.causal
-            ), "Must initialize model with causal=True if you use chunk_size"
+            assert self.causal, (
+                "Must initialize model with causal=True if you use chunk_size"
+            )
             x = self.depthwise_conv(x, chunk_size=chunk_size)
         else:
             x = self.depthwise_conv(x)
@@ -2426,7 +2424,7 @@ def _test_zipformer_main(causal: bool = False):
     seq_len = 20
     # Just make sure the forward pass runs.
 
-    c = Zipformer2(
+    c = Zipformer(
         encoder_dim=(64, 96),
         encoder_unmasked_dim=(48, 64),
         num_heads=(4, 4),

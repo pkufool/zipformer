@@ -17,79 +17,33 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
-import torch.nn as nn
-from zipformer.bin.train_wds import add_model_arguments, get_model, get_params
-from zipformer.decode.search import greedy_search_batch, modified_beam_search
+from zipformer.bin.train import add_model_arguments, get_model, get_params
+from zipformer.decode.search import (
+    greedy_search,
+    modified_beam_search,
+    ctc_greedy_search,
+    ctc_prefix_beam_search,
+)
+from zipformer.decode.post_processing import gigaspeech_post_processing
 from zipformer.utils.checkpoint import (
     average_checkpoints,
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
 )
-from zipformer.utils.ctc_decode import ctc_greedy_search, ctc_prefix_beam_search
 from zipformer.utils.utils import (
     AttributeDict,
     setup_logger,
     store_transcripts,
     str2bool,
     write_error_stats,
+    tokenize_by_cjk_char,
 )
 from ssentencepiece import Ssentencepiece
 from tqdm import tqdm
-from zipformer.utils.wds_datamodule import ATDataloader, FbankExtractor
+from atdataset import ATDataloader, FbankExtractor
 
 LOG_EPS = math.log(1e-10)
-
-conversational_filler = [
-    "UH",
-    "UHH",
-    "UM",
-    "EH",
-    "MM",
-    "HM",
-    "AH",
-    "HUH",
-    "HA",
-    "ER",
-    "OOF",
-    "HEE",
-    "ACH",
-    "EEE",
-    "EW",
-]
-unk_tags = ["<UNK>", "<unk>"]
-gigaspeech_punctuations = [
-    "<COMMA>",
-    "<PERIOD>",
-    "<QUESTIONMARK>",
-    "<EXCLAMATIONPOINT>",
-]
-gigaspeech_garbage_utterance_tags = ["<SIL>", "<NOISE>", "<MUSIC>", "<OTHER>"]
-non_scoring_words = (
-    conversational_filler
-    + unk_tags
-    + gigaspeech_punctuations
-    + gigaspeech_garbage_utterance_tags
-)
-
-
-def asr_text_post_processing(text: str) -> str:
-    # 1. convert to uppercase
-    text = text.upper()
-
-    # 2. remove hyphen
-    #   "E-COMMERCE" -> "E COMMERCE", "STATE-OF-THE-ART" -> "STATE OF THE ART"
-    text = text.replace("-", " ")
-
-    # 3. remove non-scoring words from evaluation
-    remaining_words = []
-    for word in text.split():
-        if word in non_scoring_words:
-            continue
-        remaining_words.append(word)
-
-    return " ".join(remaining_words).lower()
-
 
 ALLOWED_METHODS = {
     "rnnt-greedy-search",
@@ -140,9 +94,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="Maximum duration (s) for each cut",
     )
     parser.add_argument(
-        "--sample-rate", type=int, default=16000, help="Sample rate of the audio"
-    )
-    parser.add_argument(
         "--test-xiaoai", type=str2bool, default=False, help="Use XiaoAI test set list"
     )
     parser.add_argument(
@@ -162,7 +113,7 @@ def get_parser() -> argparse.ArgumentParser:
 
 
 def _load_checkpoint(
-    params: AttributeDict, model: nn.Module, device: torch.device
+    params: AttributeDict, model: torch.nn.Module, device: torch.device
 ) -> None:
     """Load checkpoints with or without averaging."""
     if not params.use_averaged_model:
@@ -239,21 +190,9 @@ def _load_checkpoint(
             )
 
 
-def tokenize_by_cjk_char(line: str) -> List[str]:
-    pattern = re.compile(
-        r"([\u1100-\u11ff\u2e80-\ua4cf\ua840-\uD7AF\uF900-\uFAFF\uFE30-\uFE4F\uFF65-\uFFDC\U00020000-\U0002FFFF])"
-    )
-    chars = pattern.split(line.strip())
-    words: List[str] = []
-    for w in chars:
-        if w.strip():
-            words.extend(w.split())
-    return words
-
-
 def decode_batch_rnnt(
     params: AttributeDict,
-    model: nn.Module,
+    model: torch.nn.Module,
     sp: Ssentencepiece,
     batch: dict,
 ) -> Dict[str, List[List[str]]]:
@@ -272,7 +211,7 @@ def decode_batch_rnnt(
     encoder_out, encoder_out_lens = model.forward_encoder(feature, feature_lens)
 
     if params.decoding_method == "rnnt-greedy-search":
-        hyp_tokens = greedy_search_batch(
+        hyp_tokens = greedy_search(
             model=model, encoder_out=encoder_out, encoder_out_lens=encoder_out_lens
         )
         hyps = [sp.decode(hyp).split() for hyp in hyp_tokens]
@@ -291,7 +230,7 @@ def decode_batch_rnnt(
 
 def decode_batch_ctc(
     params: AttributeDict,
-    model: nn.Module,
+    model: torch.nn.Module,
     sp: Ssentencepiece,
     batch: dict,
 ) -> Dict[str, List[List[str]]]:
@@ -333,7 +272,7 @@ def decode_batch_ctc(
 def decode_dataset(
     dl: torch.utils.data.DataLoader,
     params: AttributeDict,
-    model: nn.Module,
+    model: torch.nn.Module,
     sp: Ssentencepiece,
     decode_fn,
 ) -> Dict[str, List[Tuple[str, List[str], List[str]]]]:
@@ -361,11 +300,15 @@ def decode_dataset(
                 ref_words = ref_text.strip()
                 hyp_words = " ".join(hyp_words).strip()
 
-                ref_words = asr_text_post_processing(ref_words)
-                hyp_words = asr_text_post_processing(hyp_words)
+                ref_words = gigaspeech_post_processing(ref_words)
+                hyp_words = gigaspeech_post_processing(hyp_words)
 
-                ref_words = re.sub(r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", ref_words)
-                hyp_words = re.sub(r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", hyp_words)
+                ref_words = re.sub(
+                    r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", ref_words
+                )
+                hyp_words = re.sub(
+                    r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", hyp_words
+                )
                 ref_words = tokenize_by_cjk_char(ref_words.lower())
                 hyp_words = tokenize_by_cjk_char(hyp_words.lower())
 
@@ -446,12 +389,12 @@ def main():
         params.suffix = f"epoch-{params.epoch}_avg-{params.avg}"
 
     if params.causal:
-        assert (
-            "," not in params.chunk_size
-        ), "chunk_size should be one value in decoding."
-        assert (
-            "," not in params.left_context_frames
-        ), "left_context_frames should be one value in decoding."
+        assert "," not in params.chunk_size, (
+            "chunk_size should be one value in decoding."
+        )
+        assert "," not in params.left_context_frames, (
+            "left_context_frames should be one value in decoding."
+        )
         params.suffix += (
             f"_chunk-{params.chunk_size}_left-context-{params.left_context_frames}"
         )

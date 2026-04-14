@@ -116,7 +116,7 @@ class BatchedOptimizer(Optimizer):
 
         yield tuples  # <-- calling code will do the actual optimization here!
 
-        for ((stacked_params, _state, _names), batch) in zip(tuples, batches):
+        for (stacked_params, _state, _names), batch in zip(tuples, batches):
             for i, p in enumerate(batch):  # batch is list of Parameter
                 p.copy_(stacked_params[i])
 
@@ -214,9 +214,7 @@ def scaling_step(group, p, state, grad):
 
         denom = scale_exp_avg_sq.sqrt() + eps
 
-        scale_step = (
-            -size_lr * (bias_correction2**0.5) * scale_grads.sum(dim=0) / denom
-        )
+        scale_step = -size_lr * (bias_correction2**0.5) * scale_grads.sum(dim=0) / denom
 
         is_too_small = param_rms < param_min_rms
 
@@ -314,7 +312,6 @@ class ScaledAdam(BatchedOptimizer):
         size_update_period=4,
         clipping_update_period=100,
     ):
-
         defaults = dict(
             lr=lr,
             clipping_scale=clipping_scale,
@@ -463,9 +460,7 @@ class ScaledAdam(BatchedOptimizer):
         batch = True
 
         for group, group_params_names in zip(self.param_groups, self.parameters_names):
-
             with self.batched_params(group["params"], group_params_names) as batches:
-
                 # batches is list of pairs (stacked_param, state).  stacked_param is like
                 # a regular parameter, and will have a .grad, but the 1st dim corresponds to
                 # a stacking dim, it is not a real dim.
@@ -533,7 +528,7 @@ class ScaledAdam(BatchedOptimizer):
         scalar_lr_scale = group["scalar_lr_scale"]
 
         tot_sumsq = torch.tensor(0.0, device=first_p.device)
-        for (p, state, param_names) in tuples:
+        for p, state, param_names in tuples:
             grad = p.grad
             if grad.is_sparse:
                 raise RuntimeError(
@@ -612,7 +607,7 @@ class ScaledAdam(BatchedOptimizer):
                 self._show_param_with_unusual_grad(tuples)
 
         if ans == 0.0:
-            for (p, state, param_names) in tuples:
+            for p, state, param_names in tuples:
                 p.grad.zero_()  # get rid of infinity()
 
         return ans
@@ -635,7 +630,7 @@ class ScaledAdam(BatchedOptimizer):
         largest_name = ""
         # ratios_names is a list of 3-tuples: (grad_ratio, param_name, tensor)
         ratios_names = []
-        for (p, state, batch_param_names) in tuples:
+        for p, state, batch_param_names in tuples:
             dims = list(range(1, p.ndim))
 
             def mean(x):
@@ -646,9 +641,7 @@ class ScaledAdam(BatchedOptimizer):
                     return x
 
             grad_ratio = (
-                (mean(p.grad**2) / state["exp_avg_sq"].mean(dim=dims))
-                .sqrt()
-                .to("cpu")
+                (mean(p.grad**2) / state["exp_avg_sq"].mean(dim=dims)).sqrt().to("cpu")
             )
 
             ratios_names += zip(
@@ -686,7 +679,7 @@ class ScaledAdam(BatchedOptimizer):
                 from tuples, we still pass it to save some time.
         """
         all_sumsq_orig = {}
-        for (p, state, batch_param_names) in tuples:
+        for p, state, batch_param_names in tuples:
             # p is a stacked batch parameters.
             batch_grad = p.grad
             if p.numel() == p.shape[0]:  # a batch of scalars
@@ -706,7 +699,6 @@ class ScaledAdam(BatchedOptimizer):
             for name, sumsq_orig, rms, grad in zip(
                 batch_param_names, batch_sumsq_orig, batch_rms_orig, batch_grad
             ):
-
                 proportion_orig = sumsq_orig / tot_sumsq
                 all_sumsq_orig[name] = (proportion_orig, sumsq_orig, rms, grad)
 
@@ -936,9 +928,7 @@ class Eden2(LRScheduler):
         self.warmup_start = warmup_start
 
     def get_lr(self):
-        factor = (
-            (self.batch**2 + self.lr_batches**2) / self.lr_batches**2
-        ) ** -0.5
+        factor = ((self.batch**2 + self.lr_batches**2) / self.lr_batches**2) ** -0.5
         warmup_factor = (
             1.0
             if self.batch >= self.warmup_batches
@@ -1121,7 +1111,7 @@ class Eve(Optimizer):
 def _test_scaled_adam(hidden_dim: int):
     import timeit
 
-    from scaling import ScaledLinear
+    from zipformer.modules.scaling import ScaledLinear
 
     E = 100
     B = 4
