@@ -1103,7 +1103,7 @@ def _step_worker(
                 new_hyp.log_prob_non_blank = torch.tensor(
                     [float("-inf")], dtype=torch.float32
                 )
-                new_hyp.log_prob_blank = hyp.log_prob + log_prob
+                new_hyp.log_prob_blank = hyp.ctc_log_prob + log_prob
                 B.add(new_hyp)
             elif len(hyp.ys) > 0 and hyp.ys[-1] == new_token:
                 # Case 1: *a + a => *a
@@ -1129,7 +1129,7 @@ def _step_worker(
                 # Prefix changes, update log_prob of non_blank
                 # Caution: DO NOT use append, as clone is shallow copy
                 new_hyp.ys = hyp.ys + [new_token]
-                new_hyp.log_prob_non_blank = hyp.log_prob + log_prob
+                new_hyp.log_prob_non_blank = hyp.ctc_log_prob + log_prob
                 new_hyp.log_prob_blank = torch.tensor(
                     [float("-inf")], dtype=torch.float32
                 )
@@ -1193,7 +1193,13 @@ def _sequence_worker(
     Return:
       Returns the updated HypothesisList.
     """
-    B.add(Hypothesis())
+    B.add(
+        Hypothesis(
+            ys=[],
+            log_prob_non_blank=torch.tensor([float("-inf")], dtype=torch.float32),
+            log_prob_blank=torch.zeros(1, dtype=torch.float32),
+        )
+    )
     for j in range(encoder_out_lens):
         log_probs, indexes = topk_values[j], topk_indexes[j]
         B = _step_worker(log_probs, indexes, B, beam, blank_id)
@@ -1248,6 +1254,7 @@ def _ctc_prefix_beam_search_parallel(
         )
     async_results = pool.starmap_async(_sequence_worker, arguments)
     B = list(async_results.get())
+
     if process_pool is None:
         pool.close()
         pool.join()

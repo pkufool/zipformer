@@ -108,6 +108,7 @@ def get_parser() -> argparse.ArgumentParser:
         nargs="*",
         help="A list of test sets, e.g., dev,data/tars/librispeech_dev.lst",
     )
+
     add_model_arguments(parser)
     return parser
 
@@ -197,9 +198,12 @@ def decode_batch_rnnt(
     batch: dict,
 ) -> Dict[str, List[List[str]]]:
     device = next(model.parameters()).device
-    feature = batch["inputs"].permute(0, 2, 1).to(device)
-    supervisions = batch["supervisions"]
-    feature_lens = supervisions["num_frames"].to(device)
+    feature = batch["feature"].to(device)
+    feature_lens = batch["feature_lens"].to(device)
+
+    logging.info(
+        f"feature shape: {feature.shape}, feature_lens shape: {feature_lens.shape}"
+    )
 
     if params.causal:
         pad_len = 30
@@ -235,9 +239,8 @@ def decode_batch_ctc(
     batch: dict,
 ) -> Dict[str, List[List[str]]]:
     device = params.device
-    feature = batch["inputs"].permute(0, 2, 1).to(device)
-    supervisions = batch["supervisions"]
-    feature_lens = supervisions["num_frames"].to(device)
+    feature = batch["feature"].to(device)
+    feature_lens = batch["feature_lens"].to(device)
 
     if params.causal:
         pad_len = 30
@@ -286,8 +289,8 @@ def decode_dataset(
     log_interval = 20
 
     for batch_idx, batch in enumerate(tqdm(dl, total=len(dl))):
-        texts = batch["supervisions"]["text"]
-        cut_ids = batch["supervisions"].get("keys")
+        texts = batch["label"]
+        cut_ids = batch["ids"]
         if not cut_ids:
             cut_ids = list(range(len(texts)))
 
@@ -428,7 +431,7 @@ def main():
     model.eval()
 
     feature_extractor = FbankExtractor(
-        sample_rate=params.sample_rate, n_mels=params.feature_dim, device=device
+        sample_rate=params.sample_rate, n_mels=params.feature_dim
     )
 
     if params.test_sets is not None and len(params.test_sets) > 0:
@@ -468,14 +471,13 @@ def main():
 
     for test_set, manifest in test_sets.items():
         test_dl = ATDataloader(
-            manifests=manifest,
+            datasets=manifest,
             max_duration=params.max_duration,
             feature_extractor=feature_extractor,
             sample_rate=params.sample_rate,
             is_test=True,
             num_workers=0,
             filter_func=filter_func,
-            device=device,
         )
 
         results_dict = decode_dataset(

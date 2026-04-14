@@ -45,8 +45,8 @@ class Hypothesis:
     # Newly predicted tokens are appended to `ys`.
     ys: List[int] = field(default_factory=list)
 
-    # The log prob of ys (used by transducer beam search).
-    log_prob: Optional[torch.Tensor] = None
+    # The log prob of ys.
+    log_prob: torch.Tensor = torch.zeros(1, dtype=torch.float32)
 
     # The lm score of ys
     # May contain external LM score (including LODR score) and contextual biasing score
@@ -81,6 +81,11 @@ class Hypothesis:
     # CTC prefix beam search fields
     log_prob_blank: Optional[torch.Tensor] = None
     log_prob_non_blank: Optional[torch.Tensor] = None
+
+    # This is only the probability from model output (i.e External LM score not included).
+    @property
+    def ctc_log_prob(self) -> torch.Tensor:
+        return torch.logaddexp(self.log_prob_non_blank, self.log_prob_blank)
 
     @property
     def tot_score(self) -> torch.Tensor:
