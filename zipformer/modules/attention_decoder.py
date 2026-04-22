@@ -21,13 +21,12 @@ import math
 from typing import List, Optional
 
 import torch
-import torch.nn as nn
 from zipformer.modules.label_smoothing import LabelSmoothingLoss
 from zipformer.modules.scaling import penalize_abs_values_gt
 from zipformer.utils.utils import make_pad_mask, pad_sequences
 
 
-class AttentionDecoderModel(nn.Module):
+class AttentionDecoderModel(torch.nn.Module):
     """
     Args:
         vocab_size (int): Number of classes.
@@ -153,7 +152,7 @@ class AttentionDecoderModel(nn.Module):
         )
 
         batch_size, _, num_classes = decoder_out.size()
-        nll = nn.functional.cross_entropy(
+        nll = torch.nn.functional.cross_entropy(
             decoder_out.view(-1, num_classes),
             ys_out_pad.view(-1),
             ignore_index=self.ignore_id,
@@ -163,7 +162,7 @@ class AttentionDecoderModel(nn.Module):
         return nll
 
 
-class TransformerDecoder(nn.Module):
+class TransformerDecoder(torch.nn.Module):
     """Transfomer decoder module.
 
     Args:
@@ -188,13 +187,13 @@ class TransformerDecoder(nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.embed = nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.embed = torch.nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
 
         # Absolute positional encoding
         self.pos = PositionalEncoding(d_model, dropout_rate=0.1)
 
         self.num_layers = num_decoder_layers
-        self.layers = nn.ModuleList(
+        self.layers = torch.nn.ModuleList(
             [
                 DecoderLayer(
                     d_model=d_model,
@@ -208,7 +207,7 @@ class TransformerDecoder(nn.Module):
             ]
         )
 
-        self.output_layer = nn.Linear(d_model, vocab_size)
+        self.output_layer = torch.nn.Linear(d_model, vocab_size)
 
     def forward(
         self,
@@ -266,7 +265,7 @@ class TransformerDecoder(nn.Module):
         return x
 
 
-class DecoderLayer(nn.Module):
+class DecoderLayer(torch.nn.Module):
     """Single decoder layer module.
 
     Args:
@@ -289,25 +288,25 @@ class DecoderLayer(nn.Module):
         """Construct an DecoderLayer object."""
         super(DecoderLayer, self).__init__()
 
-        self.norm_self_attn = nn.LayerNorm(d_model)
+        self.norm_self_attn = torch.nn.LayerNorm(d_model)
         self.self_attn = MultiHeadAttention(
             d_model, attention_dim, num_heads, dropout=0.0
         )
 
-        self.norm_src_attn = nn.LayerNorm(d_model)
+        self.norm_src_attn = torch.nn.LayerNorm(d_model)
         self.src_attn = MultiHeadAttention(
             d_model, attention_dim, num_heads, memory_dim=memory_dim, dropout=0.0
         )
 
-        self.norm_ff = nn.LayerNorm(d_model)
-        self.feed_forward = nn.Sequential(
-            nn.Linear(d_model, feedforward_dim),
+        self.norm_ff = torch.nn.LayerNorm(d_model)
+        self.feed_forward = torch.nn.Sequential(
+            torch.nn.Linear(d_model, feedforward_dim),
             Swish(),
-            nn.Dropout(dropout),
-            nn.Linear(feedforward_dim, d_model),
+            torch.nn.Dropout(dropout),
+            torch.nn.Linear(feedforward_dim, d_model),
         )
 
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = torch.nn.Dropout(dropout)
 
     def forward(
         self,
@@ -347,7 +346,7 @@ class DecoderLayer(nn.Module):
         return x
 
 
-class MultiHeadAttention(nn.Module):
+class MultiHeadAttention(torch.nn.Module):
     """Multi-Head Attention layer.
 
     Args:
@@ -379,15 +378,15 @@ class MultiHeadAttention(nn.Module):
         self.dropout = dropout
         self.name = None  # will be overwritten in training code; for diagnostics.
 
-        self.linear_q = nn.Linear(embed_dim, attention_dim, bias=True)
-        self.linear_k = nn.Linear(
+        self.linear_q = torch.nn.Linear(embed_dim, attention_dim, bias=True)
+        self.linear_k = torch.nn.Linear(
             embed_dim if memory_dim is None else memory_dim, attention_dim, bias=True
         )
-        self.linear_v = nn.Linear(
+        self.linear_v = torch.nn.Linear(
             embed_dim if memory_dim is None else memory_dim, attention_dim, bias=True
         )
 
-        self.out_proj = nn.Linear(attention_dim, embed_dim, bias=True)
+        self.out_proj = torch.nn.Linear(attention_dim, embed_dim, bias=True)
 
     def forward(
         self,
@@ -459,9 +458,9 @@ class MultiHeadAttention(nn.Module):
             )
 
         attn_weights = attn_weights.view(batch * num_heads, tgt_len, src_len)
-        attn_weights = nn.functional.softmax(attn_weights, dim=-1)
+        attn_weights = torch.nn.functional.softmax(attn_weights, dim=-1)
 
-        attn_weights = nn.functional.dropout(
+        attn_weights = torch.nn.functional.dropout(
             attn_weights, p=self.dropout, training=self.training
         )
 
@@ -482,7 +481,7 @@ class MultiHeadAttention(nn.Module):
         return attn_output
 
 
-class PositionalEncoding(nn.Module):
+class PositionalEncoding(torch.nn.Module):
     """Positional encoding.
     Copied from https://github.com/espnet/espnet/blob/master/espnet/nets/pytorch_backend/transformer/embedding.py#L35.
 

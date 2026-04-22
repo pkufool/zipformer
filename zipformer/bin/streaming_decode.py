@@ -49,7 +49,6 @@ from streaming_beam_search import (
     greedy_search,
     modified_beam_search,
 )
-from torch import Tensor, nn
 from torch.nn.utils.rnn import pad_sequence
 from train import add_model_arguments, get_model, get_params
 
@@ -208,7 +207,7 @@ def get_parser():
 
 
 def get_init_states(
-    model: nn.Module,
+    model: torch.nn.Module,
     batch_size: int = 1,
     device: torch.device = torch.device("cpu"),
 ) -> List[torch.Tensor]:
@@ -302,7 +301,7 @@ def stack_states(state_list: List[List[torch.Tensor]]) -> List[torch.Tensor]:
     return batch_states
 
 
-def unstack_states(batch_states: List[Tensor]) -> List[List[Tensor]]:
+def unstack_states(batch_states: List[torch.Tensor]) -> List[List[torch.Tensor]]:
     """Unstack the zipformer state corresponding to a batch of utterances
     into a list of states, where the i-th entry is the state from the i-th
     utterance in the batch.
@@ -377,13 +376,13 @@ def unstack_states(batch_states: List[Tensor]) -> List[List[Tensor]]:
 
 
 def streaming_forward(
-    features: Tensor,
-    feature_lens: Tensor,
-    model: nn.Module,
-    states: List[Tensor],
+    features: torch.Tensor,
+    feature_lens: torch.Tensor,
+    model: torch.nn.Module,
+    states: List[torch.Tensor],
     chunk_size: int,
     left_context_len: int,
-) -> Tuple[Tensor, Tensor, List[Tensor]]:
+) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
     """
     Returns encoder outputs, output lengths, and updated states.
     """
@@ -437,7 +436,7 @@ def streaming_forward(
 
 def decode_one_chunk(
     params: AttributeDict,
-    model: nn.Module,
+    model: torch.nn.Module,
     decode_streams: List[DecodeStream],
 ) -> List[int]:
     """Decode one chunk frames of features for each decode_streams and
@@ -538,7 +537,7 @@ def decode_one_chunk(
 def decode_dataset(
     cuts: CutSet,
     params: AttributeDict,
-    model: nn.Module,
+    model: torch.nn.Module,
     sp: spm.SentencePieceProcessor,
     decoding_graph: Optional[k2.Fsa] = None,
 ) -> Dict[str, List[Tuple[List[str], List[str]]]]:

@@ -40,7 +40,6 @@ from zipformer.modules.scaling import (
     penalize_abs_values_gt,
     softmax,
 )
-from torch import Tensor, nn
 from zipformer.utils.utils import torch_autocast
 
 
@@ -192,7 +191,7 @@ class Zipformer(torch.nn.Module):
 
             encoders.append(encoder)
 
-        self.encoders = nn.ModuleList(encoders)
+        self.encoders = torch.nn.ModuleList(encoders)
 
         self.downsample_output = SimpleDownsample(
             max(encoder_dim),
@@ -201,7 +200,7 @@ class Zipformer(torch.nn.Module):
             causal=causal,
         )
 
-    def get_feature_masks(self, x: Tensor) -> Union[List[float], List[Tensor]]:
+    def get_feature_masks(self, x: torch.Tensor) -> Union[List[float], List[torch.Tensor]]:
         """
         In eval mode, returns [1.0] * num_encoders; in training mode, returns a number of
         randomized feature masks, one per encoder.
@@ -293,10 +292,10 @@ class Zipformer(torch.nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        x_lens: Tensor,
-        src_key_padding_mask: Optional[Tensor] = None,
-    ) -> Tuple[Tensor, Tensor]:
+        x: torch.Tensor,
+        x_lens: torch.Tensor,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
           x:
@@ -362,8 +361,8 @@ class Zipformer(torch.nn.Module):
         return x, lengths
 
     def _get_attn_mask(
-        self, x: Tensor, chunk_size: int, left_context_chunks: int
-    ) -> Optional[Tensor]:
+        self, x: torch.Tensor, chunk_size: int, left_context_chunks: int
+    ) -> Optional[torch.Tensor]:
         """
         Return None if chunk_size == -1, else return attention mask of shape
           (seq_len, seq_len), interpreted as (tgt_seq_len, src_seq_len).  True
@@ -404,7 +403,7 @@ class Zipformer(torch.nn.Module):
             logging.info(f"attn_mask = {attn_mask}")
         return attn_mask
 
-    def _get_full_dim_output(self, outputs: List[Tensor]):
+    def _get_full_dim_output(self, outputs: List[torch.Tensor]):
         num_encoders = len(self.encoder_dim)
         assert len(outputs) == num_encoders
         output_dim = max(self.encoder_dim)
@@ -421,11 +420,11 @@ class Zipformer(torch.nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        x_lens: Tensor,
-        states: List[Tensor],
-        src_key_padding_mask: Tensor,
-    ) -> Tuple[Tensor, Tensor, List[Tensor]]:
+        x: torch.Tensor,
+        x_lens: torch.Tensor,
+        states: List[torch.Tensor],
+        src_key_padding_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         """
         Args:
           x:
@@ -487,7 +486,7 @@ class Zipformer(torch.nn.Module):
         self,
         batch_size: int = 1,
         device: torch.device = torch.device("cpu"),
-    ) -> List[Tensor]:
+    ) -> List[torch.Tensor]:
         """Get initial states.
 
         A list of cached tensors of all encoder layers. For layer-i, states[i*6:(i+1)*6]
@@ -543,7 +542,7 @@ def _balancer_schedule(min_prob: float):
     return ScheduledFloat((0.0, 0.4), (8000.0, min_prob))
 
 
-class Zipformer2EncoderLayer(nn.Module):
+class Zipformer2EncoderLayer(torch.nn.Module):
     """
     Args:
         embed_dim: the number of expected features in the input (required).
@@ -649,7 +648,7 @@ class Zipformer2EncoderLayer(nn.Module):
         )
 
         # TODO: remove it
-        self.bypass_scale = nn.Parameter(torch.full((embed_dim,), 0.5))
+        self.bypass_scale = torch.nn.Parameter(torch.full((embed_dim,), 0.5))
 
         self.norm = BiasNorm(embed_dim)
 
@@ -712,8 +711,8 @@ class Zipformer2EncoderLayer(nn.Module):
         )
 
     def get_sequence_dropout_mask(
-        self, x: Tensor, dropout_rate: float
-    ) -> Optional[Tensor]:
+        self, x: torch.Tensor, dropout_rate: float
+    ) -> Optional[torch.Tensor]:
         if (
             dropout_rate == 0.0
             or not self.training
@@ -725,7 +724,7 @@ class Zipformer2EncoderLayer(nn.Module):
         mask = (torch.rand(batch_size, 1, device=x.device) > dropout_rate).to(x.dtype)
         return mask
 
-    def sequence_dropout(self, x: Tensor, dropout_rate: float) -> Tensor:
+    def sequence_dropout(self, x: torch.Tensor, dropout_rate: float) -> torch.Tensor:
         """
         Apply sequence-level dropout to x.
         x shape: (seq_len, batch_size, embed_dim)
@@ -738,12 +737,12 @@ class Zipformer2EncoderLayer(nn.Module):
 
     def forward(
         self,
-        src: Tensor,
-        pos_emb: Tensor,
+        src: torch.Tensor,
+        pos_emb: torch.Tensor,
         chunk_size: int = -1,
-        attn_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+        attn_mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
             Pass the input through the encoder layer.
             Args:
@@ -876,17 +875,17 @@ class Zipformer2EncoderLayer(nn.Module):
 
     def streaming_forward(
         self,
-        src: Tensor,
-        pos_emb: Tensor,
-        cached_key: Tensor,
-        cached_nonlin_attn: Tensor,
-        cached_val1: Tensor,
-        cached_val2: Tensor,
-        cached_conv1: Tensor,
-        cached_conv2: Tensor,
+        src: torch.Tensor,
+        pos_emb: torch.Tensor,
+        cached_key: torch.Tensor,
+        cached_nonlin_attn: torch.Tensor,
+        cached_val1: torch.Tensor,
+        cached_val2: torch.Tensor,
+        cached_conv1: torch.Tensor,
+        cached_conv2: torch.Tensor,
         left_context_len: int,
-        src_key_padding_mask: Tensor,
-    ) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
+        src_key_padding_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Pass the input through the encoder layer in streaming forward mode.
 
         Args:
@@ -992,7 +991,7 @@ class Zipformer2EncoderLayer(nn.Module):
         )
 
 
-class Zipformer2Encoder(nn.Module):
+class Zipformer2Encoder(torch.nn.Module):
     r"""Zipformer2Encoder is a stack of N encoder layers
 
     Args:
@@ -1009,7 +1008,7 @@ class Zipformer2Encoder(nn.Module):
 
     def __init__(
         self,
-        encoder_layer: nn.Module,
+        encoder_layer: torch.nn.Module,
         num_layers: int,
         pos_dim: int,
         dropout: float,
@@ -1023,7 +1022,7 @@ class Zipformer2Encoder(nn.Module):
             pos_dim, dropout_rate=0.15, length_factor=1.0
         )
 
-        self.layers = nn.ModuleList(
+        self.layers = torch.nn.ModuleList(
             [copy.deepcopy(encoder_layer) for i in range(num_layers)]
         )
         self.num_layers = num_layers
@@ -1043,12 +1042,12 @@ class Zipformer2Encoder(nn.Module):
 
     def forward(
         self,
-        src: Tensor,
+        src: torch.Tensor,
         chunk_size: int = -1,
-        feature_mask: Union[Tensor, float] = 1.0,
-        attn_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+        feature_mask: Union[torch.Tensor, float] = 1.0,
+        attn_mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         r"""Pass the input through the encoder layers in turn.
 
         Args:
@@ -1086,11 +1085,11 @@ class Zipformer2Encoder(nn.Module):
 
     def streaming_forward(
         self,
-        src: Tensor,
-        states: List[Tensor],
+        src: torch.Tensor,
+        states: List[torch.Tensor],
         left_context_len: int,
-        src_key_padding_mask: Tensor,
-    ) -> Tuple[Tensor, List[Tensor]]:
+        src_key_padding_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         r"""Pass the input through the encoder layers in turn.
 
         Args:
@@ -1151,7 +1150,7 @@ class Zipformer2Encoder(nn.Module):
         return output, new_states
 
 
-class BypassModule(nn.Module):
+class BypassModule(torch.nn.Module):
     """
     An nn.Module that implements a learnable bypass scale, and also randomized per-sequence
     layer-skipping.  The bypass is limited during early stages of training to be close to
@@ -1168,7 +1167,7 @@ class BypassModule(nn.Module):
         scale_max: FloatLike = 1.0,
     ):
         super().__init__()
-        self.bypass_scale = nn.Parameter(torch.full((embed_dim,), 0.5))
+        self.bypass_scale = torch.nn.Parameter(torch.full((embed_dim,), 0.5))
         self.skip_rate = copy.deepcopy(skip_rate)
         self.straight_through_rate = copy.deepcopy(straight_through_rate)
         self.scale_min = copy.deepcopy(scale_min)
@@ -1200,7 +1199,7 @@ class BypassModule(nn.Module):
                 ans = torch.maximum(ans, mask.to(ans.dtype))
             return ans
 
-    def forward(self, src_orig: Tensor, src: Tensor):
+    def forward(self, src_orig: torch.Tensor, src: torch.Tensor):
         """
         Args: src_orig and src are both of shape (seq_len, batch_size, num_channels)
         Returns: something with the same shape as src and src_orig
@@ -1209,7 +1208,7 @@ class BypassModule(nn.Module):
         return src_orig + (src - src_orig) * bypass_scale
 
 
-class DownsampledZipformer2Encoder(nn.Module):
+class DownsampledZipformer2Encoder(torch.nn.Module):
     r"""
     DownsampledZipformer2Encoder is a zipformer encoder evaluated at a reduced frame rate,
     after convolutional downsampling, and then upsampled again at the output, and combined
@@ -1218,7 +1217,7 @@ class DownsampledZipformer2Encoder(nn.Module):
 
     def __init__(
         self,
-        encoder: nn.Module,
+        encoder: torch.nn.Module,
         dim: int,
         downsample: int,
         dropout: FloatLike,
@@ -1234,12 +1233,12 @@ class DownsampledZipformer2Encoder(nn.Module):
 
     def forward(
         self,
-        src: Tensor,
+        src: torch.Tensor,
         chunk_size: int = -1,
-        feature_mask: Union[Tensor, float] = 1.0,
-        attn_mask: Optional[Tensor] = None,
-        src_key_padding_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+        feature_mask: Union[torch.Tensor, float] = 1.0,
+        attn_mask: Optional[torch.Tensor] = None,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         r"""Downsample, go through encoder, upsample.
 
         Args:
@@ -1275,11 +1274,11 @@ class DownsampledZipformer2Encoder(nn.Module):
 
     def streaming_forward(
         self,
-        src: Tensor,
-        states: List[Tensor],
+        src: torch.Tensor,
+        states: List[torch.Tensor],
         left_context_len: int,
-        src_key_padding_mask: Tensor,
-    ) -> Tuple[Tensor, List[Tensor]]:
+        src_key_padding_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         r"""Downsample, go through encoder, upsample, in streaming forward mode.
 
         Args:
@@ -1321,14 +1320,14 @@ class SimpleDownsample(torch.nn.Module):
         super(SimpleDownsample, self).__init__()
 
         self.causal = causal
-        self.bias = nn.Parameter(torch.zeros(downsample))
+        self.bias = torch.nn.Parameter(torch.zeros(downsample))
 
         self.name = None  # will be set from training code
         self.dropout = copy.deepcopy(dropout)
 
         self.downsample = downsample
 
-    def forward(self, src: Tensor) -> Tensor:
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
         """
         x: (seq_len, batch_size, in_channels)
         Returns a tensor of shape
@@ -1376,7 +1375,7 @@ class SimpleUpsample(torch.nn.Module):
         super(SimpleUpsample, self).__init__()
         self.upsample = upsample
 
-    def forward(self, src: Tensor) -> Tensor:
+    def forward(self, src: torch.Tensor) -> torch.Tensor:
         """
         x: (seq_len, batch_size, num_channels)
         Returns a tensor of shape
@@ -1432,7 +1431,7 @@ class CompactRelPositionalEncoding(torch.nn.Module):
         self.length_factor = length_factor
         self.extend_pe(torch.tensor(0.0).expand(max_len))
 
-    def extend_pe(self, x: Tensor, left_context_len: int = 0) -> None:
+    def extend_pe(self, x: torch.Tensor, left_context_len: int = 0) -> None:
         """Reset the positional encodings."""
         T = x.size(0) + left_context_len
 
@@ -1482,7 +1481,7 @@ class CompactRelPositionalEncoding(torch.nn.Module):
 
         self.pe = pe.to(dtype=x.dtype)
 
-    def forward(self, x: Tensor, left_context_len: int = 0) -> Tensor:
+    def forward(self, x: torch.Tensor, left_context_len: int = 0) -> torch.Tensor:
         """Create positional encoding.
 
         Args:
@@ -1505,7 +1504,7 @@ class CompactRelPositionalEncoding(torch.nn.Module):
         return self.dropout(pos_emb)
 
 
-class RelPositionMultiheadAttentionWeights(nn.Module):
+class RelPositionMultiheadAttentionWeights(torch.nn.Module):
     r"""Module that computes multi-head attention weights with relative position encoding.
     Various other modules consume the resulting attention weights: see, for example, the
     SimpleAttention module which allows you to compute conventional attention.
@@ -1592,11 +1591,11 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        pos_emb: Tensor,
-        key_padding_mask: Optional[Tensor] = None,
-        attn_mask: Optional[Tensor] = None,
-    ) -> Tensor:
+        x: torch.Tensor,
+        pos_emb: torch.Tensor,
+        key_padding_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         r"""
         Args:
             x: input of shape (seq_len, batch_size, embed_dim)
@@ -1739,7 +1738,7 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
         elif random.random() < 0.001 and not self.training:
             self._print_attn_entropy(attn_weights)
 
-        attn_weights = nn.functional.dropout(
+        attn_weights = torch.nn.functional.dropout(
             attn_weights, p=self.dropout, training=self.training
         )
 
@@ -1747,12 +1746,12 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        pos_emb: Tensor,
-        cached_key: Tensor,
+        x: torch.Tensor,
+        pos_emb: torch.Tensor,
+        cached_key: torch.Tensor,
         left_context_len: int,
-        key_padding_mask: Tensor,
-    ) -> Tuple[Tensor, Tensor]:
+        key_padding_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""
         Args:
             x: input of shape (seq_len, batch_size, embed_dim)
@@ -1862,7 +1861,7 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
 
         return attn_weights, cached_key
 
-    def _print_attn_entropy(self, attn_weights: Tensor):
+    def _print_attn_entropy(self, attn_weights: torch.Tensor):
         # attn_weights: (num_heads, batch_size, seq_len, seq_len)
         (num_heads, batch_size, seq_len, seq_len) = attn_weights.shape
 
@@ -1879,7 +1878,7 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
                 )
 
 
-class SelfAttention(nn.Module):
+class SelfAttention(torch.nn.Module):
     """
     The simplest possible attention module.  This one works with already-computed attention
     weights, e.g. as computed by RelPositionMultiheadAttentionWeights.
@@ -1897,7 +1896,7 @@ class SelfAttention(nn.Module):
         value_head_dim: int,
     ) -> None:
         super().__init__()
-        self.in_proj = nn.Linear(embed_dim, num_heads * value_head_dim, bias=True)
+        self.in_proj = torch.nn.Linear(embed_dim, num_heads * value_head_dim, bias=True)
 
         self.out_proj = ScaledLinear(
             num_heads * value_head_dim, embed_dim, bias=True, initial_scale=0.05
@@ -1912,9 +1911,9 @@ class SelfAttention(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        attn_weights: Tensor,
-    ) -> Tensor:
+        x: torch.Tensor,
+        attn_weights: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Args:
           x: input tensor, of shape (seq_len, batch_size, embed_dim)
@@ -1951,11 +1950,11 @@ class SelfAttention(nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        attn_weights: Tensor,
-        cached_val: Tensor,
+        x: torch.Tensor,
+        attn_weights: torch.Tensor,
+        cached_val: torch.Tensor,
         left_context_len: int,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x: input tensor, of shape (seq_len, batch_size, embed_dim)
@@ -2006,12 +2005,12 @@ class SelfAttention(nn.Module):
         return x, cached_val
 
 
-class FeedforwardModule(nn.Module):
+class FeedforwardModule(torch.nn.Module):
     """Feedforward module in Zipformer2 model."""
 
     def __init__(self, embed_dim: int, feedforward_dim: int, dropout: FloatLike):
         super(FeedforwardModule, self).__init__()
-        self.in_proj = nn.Linear(embed_dim, feedforward_dim)
+        self.in_proj = torch.nn.Linear(embed_dim, feedforward_dim)
 
         self.hidden_balancer = Balancer(
             feedforward_dim,
@@ -2040,7 +2039,7 @@ class FeedforwardModule(nn.Module):
             grad_scale=0.01,
         )
 
-    def forward(self, x: Tensor):
+    def forward(self, x: torch.Tensor):
         x = self.in_proj(x)
         x = self.hidden_balancer(x)
         # out_proj contains SwooshL activation, then dropout, then linear.
@@ -2049,7 +2048,7 @@ class FeedforwardModule(nn.Module):
         return x
 
 
-class NonlinAttention(nn.Module):
+class NonlinAttention(torch.nn.Module):
     """This is like the ConvolutionModule, but refactored so that we use multiplication by attention weights (borrowed
        from the attention module) in place of actual convolution.  We also took out the second nonlinearity, the
        one after the attention mechanism.
@@ -2067,7 +2066,7 @@ class NonlinAttention(nn.Module):
 
         self.hidden_channels = hidden_channels
 
-        self.in_proj = nn.Linear(channels, hidden_channels * 3, bias=True)
+        self.in_proj = torch.nn.Linear(channels, hidden_channels * 3, bias=True)
 
         # balancer that goes before the sigmoid.  Have quite a large min_abs value, at 2.0,
         # because we noticed that well-trained instances of this module have abs-value before the sigmoid
@@ -2081,7 +2080,7 @@ class NonlinAttention(nn.Module):
             min_abs=0.5,
             max_abs=5.0,
         )
-        self.tanh = nn.Tanh()
+        self.tanh = torch.nn.Tanh()
 
         self.identity1 = Identity()  # for diagnostics.
         self.identity2 = Identity()  # for diagnostics.
@@ -2107,9 +2106,9 @@ class NonlinAttention(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        attn_weights: Tensor,
-    ) -> Tensor:
+        x: torch.Tensor,
+        attn_weights: torch.Tensor,
+    ) -> torch.Tensor:
         """.
                 Args:
                    x: a Tensor of shape (seq_len, batch_size, num_channels)
@@ -2154,11 +2153,11 @@ class NonlinAttention(nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        attn_weights: Tensor,
-        cached_x: Tensor,
+        x: torch.Tensor,
+        attn_weights: torch.Tensor,
+        cached_x: torch.Tensor,
         left_context_len: int,
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """.
         Args:
             x: a Tensor of shape (seq_len, batch_size, num_channels)
@@ -2214,7 +2213,7 @@ class NonlinAttention(nn.Module):
         return x, cached_x
 
 
-class ConvolutionModule(nn.Module):
+class ConvolutionModule(torch.nn.Module):
     """ConvolutionModule in Zipformer2 model.
     Modified from https://github.com/espnet/espnet/blob/master/espnet/nets/pytorch_backend/zipformer/convolution.py
 
@@ -2239,7 +2238,7 @@ class ConvolutionModule(nn.Module):
         bottleneck_dim = channels
         self.causal = causal
 
-        self.in_proj = nn.Linear(
+        self.in_proj = torch.nn.Linear(
             channels,
             2 * bottleneck_dim,
         )
@@ -2270,7 +2269,7 @@ class ConvolutionModule(nn.Module):
 
         self.activation1 = Identity()  # for diagnostics
 
-        self.sigmoid = nn.Sigmoid()
+        self.sigmoid = torch.nn.Sigmoid()
 
         self.activation2 = Identity()  # for diagnostics
 
@@ -2279,7 +2278,7 @@ class ConvolutionModule(nn.Module):
         self.depthwise_conv = (
             ChunkCausalDepthwiseConv1d(channels=bottleneck_dim, kernel_size=kernel_size)
             if causal
-            else nn.Conv1d(
+            else torch.nn.Conv1d(
                 in_channels=bottleneck_dim,
                 out_channels=bottleneck_dim,
                 groups=bottleneck_dim,
@@ -2314,10 +2313,10 @@ class ConvolutionModule(nn.Module):
 
     def forward(
         self,
-        x: Tensor,
-        src_key_padding_mask: Optional[Tensor] = None,
+        x: torch.Tensor,
+        src_key_padding_mask: Optional[torch.Tensor] = None,
         chunk_size: int = -1,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         """Compute convolution module.
 
         Args:
@@ -2370,10 +2369,10 @@ class ConvolutionModule(nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        cache: Tensor,
-        src_key_padding_mask: Tensor,
-    ) -> Tuple[Tensor, Tensor]:
+        x: torch.Tensor,
+        cache: torch.Tensor,
+        src_key_padding_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute convolution module in streaming forward mode.
 
         Args:
@@ -2410,7 +2409,7 @@ class ConvolutionModule(nn.Module):
         return x, cache
 
 
-class ScalarMultiply(nn.Module):
+class ScalarMultiply(torch.nn.Module):
     def __init__(self, scale: float):
         super().__init__()
         self.scale = scale

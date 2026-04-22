@@ -74,7 +74,6 @@ from pathlib import Path
 from typing import List, Tuple
 
 import torch
-import torch.nn as nn
 from asr_datamodule import LibriSpeechAsrDataModule
 from k2 import SymbolTable
 from onnx_pretrained import OnnxModel, greedy_search
@@ -175,7 +174,7 @@ def decode_one_batch(
 
 def decode_dataset(
     dl: torch.utils.data.DataLoader,
-    model: nn.Module,
+    model: torch.nn.Module,
     token_table: SymbolTable,
 ) -> Tuple[List[Tuple[str, List[str], List[str]]], float]:
     """Decode dataset.

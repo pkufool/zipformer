@@ -65,7 +65,6 @@ import optim
 import sentencepiece as spm
 import torch
 import torch.multiprocessing as mp
-import torch.nn as nn
 from asr_datamodule import LibriSpeechAsrDataModule
 from decoder import Decoder
 from joiner import Joiner
@@ -76,7 +75,6 @@ from model import AsrModel
 from optim import Eden, ScaledAdam
 from scaling import ScheduledFloat
 from subsampling import Conv2dSubsampling
-from torch import Tensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from zipformer import Zipformer2
@@ -117,9 +115,9 @@ def get_adjusted_batch_count(params: AttributeDict) -> float:
     ) + 100000
 
 
-def set_batch_count(model: Union[nn.Module, DDP], batch_count: float) -> None:
+def set_batch_count(model: Union[torch.nn.Module, DDP], batch_count: float) -> None:
     if isinstance(model, DDP):
-        # get underlying nn.Module
+        # get underlying torch.nn.Module
         model = model.module
     for name, module in model.named_modules():
         if hasattr(module, "batch_count"):
@@ -596,7 +594,7 @@ def _to_int_tuple(s: str):
     return tuple(map(int, s.split(",")))
 
 
-def get_encoder_embed(params: AttributeDict) -> nn.Module:
+def get_encoder_embed(params: AttributeDict) -> torch.nn.Module:
     # encoder_embed converts the input of shape (N, T, num_features)
     # to the shape (N, (T - 7) // 2, encoder_dims).
     # That is, it does two things simultaneously:
@@ -613,7 +611,7 @@ def get_encoder_embed(params: AttributeDict) -> nn.Module:
     return encoder_embed
 
 
-def get_encoder_model(params: AttributeDict) -> nn.Module:
+def get_encoder_model(params: AttributeDict) -> torch.nn.Module:
     encoder = Zipformer2(
         output_downsampling_factor=2,
         downsampling_factor=_to_int_tuple(params.downsampling_factor),
@@ -636,7 +634,7 @@ def get_encoder_model(params: AttributeDict) -> nn.Module:
     return encoder
 
 
-def get_decoder_model(params: AttributeDict) -> nn.Module:
+def get_decoder_model(params: AttributeDict) -> torch.nn.Module:
     decoder = Decoder(
         vocab_size=params.vocab_size,
         decoder_dim=params.decoder_dim,
@@ -646,7 +644,7 @@ def get_decoder_model(params: AttributeDict) -> nn.Module:
     return decoder
 
 
-def get_joiner_model(params: AttributeDict) -> nn.Module:
+def get_joiner_model(params: AttributeDict) -> torch.nn.Module:
     joiner = Joiner(
         encoder_dim=max(_to_int_tuple(params.encoder_dim)),
         decoder_dim=params.decoder_dim,
@@ -656,7 +654,7 @@ def get_joiner_model(params: AttributeDict) -> nn.Module:
     return joiner
 
 
-def get_model(params: AttributeDict) -> nn.Module:
+def get_model(params: AttributeDict) -> torch.nn.Module:
     assert params.use_transducer or params.use_ctc, (
         f"At least one of them should be True, "
         f"but got params.use_transducer={params.use_transducer}, "
@@ -689,8 +687,8 @@ def get_model(params: AttributeDict) -> nn.Module:
 
 def load_checkpoint_if_available(
     params: AttributeDict,
-    model: nn.Module,
-    model_avg: nn.Module = None,
+    model: torch.nn.Module,
+    model_avg: torch.nn.Module = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
 ) -> Optional[Dict[str, Any]]:
@@ -754,13 +752,13 @@ def load_checkpoint_if_available(
 
 
 def load_model_params(
-    ckpt: str, model: nn.Module, init_modules: List[str] = None, strict: bool = True
+    ckpt: str, model: torch.nn.Module, init_modules: List[str] = None, strict: bool = True
 ):
     """Load model params from checkpoint
 
     Args:
         ckpt (str): Path to the checkpoint
-        model (nn.Module): model to be loaded
+        model (torch.nn.Module): model to be loaded
         init_modules (list[str]): List of modules to be initialized
 
     """
@@ -803,8 +801,8 @@ def load_model_params(
 
 def save_checkpoint(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
-    model_avg: Optional[nn.Module] = None,
+    model: Union[torch.nn.Module, DDP],
+    model_avg: Optional[torch.nn.Module] = None,
     optimizer: Optional[torch.optim.Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
     sampler: Optional[CutSampler] = None,
@@ -853,11 +851,11 @@ def save_checkpoint(
 
 def compute_loss(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     sp: spm.SentencePieceProcessor,
     batch: dict,
     is_training: bool,
-) -> Tuple[Tensor, MetricsTracker]:
+) -> Tuple[torch.Tensor, MetricsTracker]:
     """
     Compute loss given the model and its inputs.
 
@@ -944,7 +942,7 @@ def compute_loss(
 
 def compute_validation_loss(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     sp: spm.SentencePieceProcessor,
     valid_dl: torch.utils.data.DataLoader,
     world_size: int = 1,
@@ -978,7 +976,7 @@ def compute_validation_loss(
 
 def train_one_epoch(
     params: AttributeDict,
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     optimizer: torch.optim.Optimizer,
     scheduler: LRSchedulerType,
     sp: spm.SentencePieceProcessor,
@@ -986,7 +984,7 @@ def train_one_epoch(
     valid_dls: torch.utils.data.DataLoader,
     valid_sets: List[str],
     scaler: "GradScaler",
-    model_avg: Optional[nn.Module] = None,
+    model_avg: Optional[torch.nn.Module] = None,
     tb_writer: Optional[SummaryWriter] = None,
     world_size: int = 1,
     rank: int = 0,
@@ -1232,7 +1230,7 @@ def run(rank, world_size, args):
     logging.info(f"Number of model parameters: {num_param}")
 
     assert params.save_every_n >= params.average_period
-    model_avg: Optional[nn.Module] = None
+    model_avg: Optional[torch.nn.Module] = None
     if rank == 0:
         # model_avg is only used with rank 0
         model_avg = copy.deepcopy(model).to(torch.float64)
@@ -1459,7 +1457,7 @@ def display_and_save_batch(
 
 
 def scan_pessimistic_batches_for_oom(
-    model: Union[nn.Module, DDP],
+    model: Union[torch.nn.Module, DDP],
     train_dl: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     sp: spm.SentencePieceProcessor,

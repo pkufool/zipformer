@@ -15,12 +15,10 @@
 # limitations under the License.
 
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from zipformer.modules.scaling import Balancer
 
 
-class Decoder(nn.Module):
+class Decoder(torch.nn.Module):
     """This class modifies the stateless decoder from the following paper:
 
         RNN-transducer with stateless prediction network
@@ -54,7 +52,7 @@ class Decoder(nn.Module):
         """
         super().__init__()
 
-        self.embedding = nn.Embedding(
+        self.embedding = torch.nn.Embedding(
             num_embeddings=vocab_size,
             embedding_dim=decoder_dim,
         )
@@ -77,7 +75,7 @@ class Decoder(nn.Module):
         self.vocab_size = vocab_size
 
         if context_size > 1:
-            self.conv = nn.Conv1d(
+            self.conv = torch.nn.Conv1d(
                 in_channels=decoder_dim,
                 out_channels=decoder_dim,
                 kernel_size=context_size,
@@ -97,8 +95,8 @@ class Decoder(nn.Module):
         else:
             # To avoid `RuntimeError: Module 'Decoder' has no attribute 'conv'`
             # when inference with torch.jit.script and context_size == 1
-            self.conv = nn.Identity()
-            self.balancer2 = nn.Identity()
+            self.conv = torch.nn.Identity()
+            self.balancer2 = torch.nn.Identity()
 
     def forward(self, y: torch.Tensor, need_pad: bool = True) -> torch.Tensor:
         """
@@ -121,14 +119,14 @@ class Decoder(nn.Module):
         if self.context_size > 1:
             embedding_out = embedding_out.permute(0, 2, 1)
             if need_pad is True:
-                embedding_out = F.pad(embedding_out, pad=(self.context_size - 1, 0))
+                embedding_out = torch.nn.functional.pad(embedding_out, pad=(self.context_size - 1, 0))
             else:
                 # During inference time, there is no need to do extra padding
                 # as we only need one output
                 assert embedding_out.size(-1) == self.context_size
             embedding_out = self.conv(embedding_out)
             embedding_out = embedding_out.permute(0, 2, 1)
-            embedding_out = F.relu(embedding_out)
+            embedding_out = torch.nn.functional.relu(embedding_out)
             embedding_out = self.balancer2(embedding_out)
 
         return embedding_out

@@ -24,9 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import torch
-import torch.nn as nn
 from lhotse.dataset.sampling.base import CutSampler
-from torch import Tensor
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
@@ -37,8 +35,8 @@ LRSchedulerType = object
 
 def save_checkpoint(
     filename: Path,
-    model: Union[nn.Module, DDP],
-    model_avg: Optional[nn.Module] = None,
+    model: Union[torch.nn.Module, DDP],
+    model_avg: Optional[torch.nn.Module] = None,
     params: Optional[Dict[str, Any]] = None,
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
@@ -97,8 +95,8 @@ def save_checkpoint(
 
 def load_checkpoint(
     filename: Path,
-    model: nn.Module,
-    model_avg: Optional[nn.Module] = None,
+    model: torch.nn.Module,
+    model_avg: Optional[torch.nn.Module] = None,
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
     scaler: Optional["GradScaler"] = None,
@@ -195,8 +193,8 @@ def average_checkpoints(
 def save_checkpoint_with_global_batch_idx(
     out_dir: Path,
     global_batch_idx: int,
-    model: Union[nn.Module, DDP],
-    model_avg: Optional[nn.Module] = None,
+    model: Union[torch.nn.Module, DDP],
+    model_avg: Optional[torch.nn.Module] = None,
     params: Optional[Dict[str, Any]] = None,
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
@@ -353,9 +351,9 @@ def remove_checkpoints(
 
 
 def update_averaged_model(
-    params: Dict[str, Tensor],
-    model_cur: Union[nn.Module, DDP],
-    model_avg: nn.Module,
+    params: Dict[str, torch.Tensor],
+    model_cur: Union[torch.nn.Module, DDP],
+    model_avg: torch.nn.Module,
 ) -> None:
     """Update the averaged model:
     model_avg = model_cur * (average_period / batch_idx_train)
@@ -390,7 +388,7 @@ def average_checkpoints_with_averaged_model(
     filename_start: str,
     filename_end: str,
     device: torch.device = torch.device("cpu"),
-) -> Dict[str, Tensor]:
+) -> Dict[str, torch.Tensor]:
     """Average model parameters over the range with given
     start model (excluded) and end model.
 
@@ -455,12 +453,12 @@ def average_checkpoints_with_averaged_model(
 
 
 def average_state_dict(
-    state_dict_1: Dict[str, Tensor],
-    state_dict_2: Dict[str, Tensor],
+    state_dict_1: Dict[str, torch.Tensor],
+    state_dict_2: Dict[str, torch.Tensor],
     weight_1: float,
     weight_2: float,
     scaling_factor: float = 1.0,
-) -> Dict[str, Tensor]:
+) -> Dict[str, torch.Tensor]:
     """Average two state_dict with given weights:
     state_dict_1 = (state_dict_1 * weight_1 + state_dict_2 * weight_2)
       * scaling_factor

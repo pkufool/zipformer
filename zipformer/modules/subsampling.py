@@ -33,10 +33,7 @@ from zipformer.modules.scaling import (
     SwooshR,
     Whiten,
 )
-from torch import Tensor, nn
-
-
-class ConvNeXt(nn.Module):
+class ConvNeXt(torch.nn.Module):
     """
     Our interpretation of the ConvNeXt module as used in https://arxiv.org/pdf/2206.14747.pdf
     """
@@ -55,7 +52,7 @@ class ConvNeXt(nn.Module):
             layerdrop_rate = ScheduledFloat((0.0, 0.2), (20000.0, 0.015))
         self.layerdrop_rate = layerdrop_rate
 
-        self.depthwise_conv = nn.Conv2d(
+        self.depthwise_conv = torch.nn.Conv2d(
             in_channels=channels,
             out_channels=channels,
             groups=channels,
@@ -63,7 +60,7 @@ class ConvNeXt(nn.Module):
             padding=self.padding,
         )
 
-        self.pointwise_conv1 = nn.Conv2d(
+        self.pointwise_conv1 = torch.nn.Conv2d(
             in_channels=channels, out_channels=hidden_channels, kernel_size=1
         )
 
@@ -99,7 +96,7 @@ class ConvNeXt(nn.Module):
             grad_scale=0.01,
         )
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if torch.jit.is_scripting() or torch.jit.is_tracing() or not self.training:
             return self.forward_internal(x)
         layerdrop_rate = float(self.layerdrop_rate)
@@ -117,8 +114,8 @@ class ConvNeXt(nn.Module):
         return self.forward_internal(x, mask)
 
     def forward_internal(
-        self, x: Tensor, layer_skip_mask: Optional[Tensor] = None
-    ) -> Tensor:
+        self, x: torch.Tensor, layer_skip_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
         """
         x layout: (N, C, H, W), i.e. (batch_size, num_channels, num_frames, num_freqs)
 
@@ -146,9 +143,9 @@ class ConvNeXt(nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        cached_left_pad: Tensor,
-    ) -> Tuple[Tensor, Tensor]:
+        x: torch.Tensor,
+        cached_left_pad: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
             x layout: (N, C, H, W), i.e. (batch_size, num_channels, num_frames, num_freqs)
@@ -191,7 +188,7 @@ class ConvNeXt(nn.Module):
         return x, cached_left_pad
 
 
-class Conv2dSubsampling(nn.Module):
+class Conv2dSubsampling(torch.nn.Module):
     """Convolutional 2D subsampling (to 1/2 length).
 
     Convert an input of shape (N, T, idim) to an output
@@ -234,8 +231,8 @@ class Conv2dSubsampling(nn.Module):
         # training.  (The second one is necessary to stop its bias from getting
         # a too-large gradient).
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(
+        self.conv = torch.nn.Sequential(
+            torch.nn.Conv2d(
                 in_channels=1,
                 out_channels=layer1_channels,
                 kernel_size=3,
@@ -244,7 +241,7 @@ class Conv2dSubsampling(nn.Module):
             ScaleGrad(0.2),
             Balancer(layer1_channels, channel_dim=1, max_abs=1.0),
             SwooshR(),
-            nn.Conv2d(
+            torch.nn.Conv2d(
                 in_channels=layer1_channels,
                 out_channels=layer2_channels,
                 kernel_size=3,
@@ -253,7 +250,7 @@ class Conv2dSubsampling(nn.Module):
             ),
             Balancer(layer2_channels, channel_dim=1, max_abs=4.0),
             SwooshR(),
-            nn.Conv2d(
+            torch.nn.Conv2d(
                 in_channels=layer2_channels,
                 out_channels=layer3_channels,
                 kernel_size=3,
@@ -270,7 +267,7 @@ class Conv2dSubsampling(nn.Module):
         self.out_width = (((in_channels - 1) // 2) - 1) // 2
         self.layer3_channels = layer3_channels
 
-        self.out = nn.Linear(self.out_width * layer3_channels, out_channels)
+        self.out = torch.nn.Linear(self.out_width * layer3_channels, out_channels)
         # use a larger than normal grad_scale on this whitening module; there is
         # only one such module, so there is not a concern about adding together
         # many copies of this extra gradient term.
@@ -335,7 +332,7 @@ class Conv2dSubsampling(nn.Module):
         self,
         x: torch.Tensor,
         x_lens: torch.Tensor,
-        cached_left_pad: Tensor,
+        cached_left_pad: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Subsample x.
 
@@ -391,7 +388,7 @@ class Conv2dSubsampling(nn.Module):
         self,
         batch_size: int = 1,
         device: torch.device = torch.device("cpu"),
-    ) -> Tensor:
+    ) -> torch.Tensor:
         """Get initial states for Conv2dSubsampling module.
         It is the cached left padding for ConvNeXt module,
         of shape (batch_size, num_channels, left_pad, num_freqs)

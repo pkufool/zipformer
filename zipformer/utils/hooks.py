@@ -20,10 +20,7 @@ import logging
 import random
 
 import torch
-from torch import Tensor, nn
-
-
-def register_inf_check_hooks(model: nn.Module) -> None:
+def register_inf_check_hooks(model: torch.nn.Module) -> None:
     """Registering forward hook on each module, to check
     whether its output tensors is not finite.
 
@@ -38,7 +35,7 @@ def register_inf_check_hooks(model: nn.Module) -> None:
 
         # default param _name is a way to capture the current value of the variable "name".
         def forward_hook(_module, _input, _output, _name=name):
-            if isinstance(_output, Tensor):
+            if isinstance(_output, torch.Tensor):
                 try:
                     if not torch.isfinite(_output.to(torch.float32).sum()):
                         logging.warning(f"The sum of {_name}.output is not finite")
@@ -48,7 +45,7 @@ def register_inf_check_hooks(model: nn.Module) -> None:
                 for i, o in enumerate(_output):
                     if isinstance(o, tuple):
                         o = o[0]
-                    if not isinstance(o, Tensor):
+                    if not isinstance(o, torch.Tensor):
                         continue
                     try:
                         if not torch.isfinite(o.to(torch.float32).sum()):
@@ -60,7 +57,7 @@ def register_inf_check_hooks(model: nn.Module) -> None:
 
         # default param _name is a way to capture the current value of the variable "name".
         def backward_hook(_module, _input, _output, _name=name):
-            if isinstance(_output, Tensor):
+            if isinstance(_output, torch.Tensor):
                 try:
                     if not torch.isfinite(_output.to(torch.float32).sum()):
                         logging.warning(f"The sum of {_name}.grad is not finite")
@@ -71,7 +68,7 @@ def register_inf_check_hooks(model: nn.Module) -> None:
                 for i, o in enumerate(_output):
                     if isinstance(o, tuple):
                         o = o[0]
-                    if not isinstance(o, Tensor):
+                    if not isinstance(o, torch.Tensor):
                         continue
                     if not torch.isfinite(o.to(torch.float32).sum()):
                         logging.warning(f"The sum of {_name}.grad[{i}] is not finite")
@@ -99,7 +96,7 @@ def register_inf_check_hooks(model: nn.Module) -> None:
 
 
 def _test_inf_check_hooks():
-    model = nn.Sequential(nn.Linear(100, 50), nn.Linear(50, 80))
+    model = torch.nn.Sequential(torch.nn.Linear(100, 50), torch.nn.Linear(50, 80))
 
     register_inf_check_hooks(model)
     for _ in range(10):

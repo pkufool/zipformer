@@ -22,7 +22,6 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 from lhotse.utils import fix_random_seed
-from torch import Tensor
 from torch.optim import Optimizer
 
 
@@ -501,7 +500,7 @@ class ScaledAdam(BatchedOptimizer):
         return loss
 
     def _get_clipping_scale(
-        self, group: dict, tuples: List[Tuple[Tensor, dict, List[str]]]
+        self, group: dict, tuples: List[Tuple[torch.Tensor, dict, List[str]]]
     ) -> float:
         """
         Returns a scalar factor <= 1.0 that dictates gradient clipping, i.e. we will scale the gradients
@@ -614,7 +613,7 @@ class ScaledAdam(BatchedOptimizer):
 
     def _show_param_with_unusual_grad(
         self,
-        tuples: List[Tuple[Tensor, dict, List[str]]],
+        tuples: List[Tuple[torch.Tensor, dict, List[str]]],
     ):
         """
         Print information about parameter which has the largest ratio of grad-on-this-batch
@@ -661,8 +660,8 @@ class ScaledAdam(BatchedOptimizer):
 
     def _show_gradient_dominating_parameter(
         self,
-        tuples: List[Tuple[Tensor, dict, List[str]]],
-        tot_sumsq: Tensor,
+        tuples: List[Tuple[torch.Tensor, dict, List[str]]],
+        tot_sumsq: torch.Tensor,
         scalar_lr_scale: float,
     ):
         """
@@ -725,7 +724,7 @@ class ScaledAdam(BatchedOptimizer):
         )
 
 
-def largest_index(x: Tensor):
+def largest_index(x: torch.Tensor):
     x = x.contiguous()
     argmax = x.abs().argmax().item()
     return [(argmax // x.stride(i)) % x.size(i) for i in range(x.ndim)]

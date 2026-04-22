@@ -87,8 +87,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
-import torch.nn as nn
-
 try:
     import k2
     from scaling_converter import convert_scaled_to_non_scaled
@@ -472,10 +470,10 @@ def export_streaming_encoder_onnx(
 # ==============================================================================
 
 
-class EncoderModel(nn.Module):
+class EncoderModel(torch.nn.Module):
     """A wrapper for encoder and encoder_embed (non-streaming JIT export)."""
 
-    def __init__(self, encoder: nn.Module, encoder_embed: nn.Module) -> None:
+    def __init__(self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module) -> None:
         super().__init__()
         self.encoder = encoder
         self.encoder_embed = encoder_embed
@@ -491,10 +489,10 @@ class EncoderModel(nn.Module):
         return encoder_out, encoder_out_lens
 
 
-class StreamingEncoderModel(nn.Module):
+class StreamingEncoderModel(torch.nn.Module):
     """A wrapper for encoder and encoder_embed (streaming JIT export)."""
 
-    def __init__(self, encoder: nn.Module, encoder_embed: nn.Module) -> None:
+    def __init__(self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module) -> None:
         super().__init__()
         assert len(encoder.chunk_size) == 1, encoder.chunk_size
         assert len(encoder.left_context_frames) == 1, encoder.left_context_frames
@@ -598,7 +596,7 @@ def export_torch(params, model):
 # ==============================================================================
 
 
-class OnnxEncoder(nn.Module):
+class OnnxEncoder(torch.nn.Module):
     """A wrapper for Zipformer and the encoder_proj from the joiner (non-streaming)."""
 
     def __init__(self, encoder, encoder_embed, encoder_proj):
@@ -619,7 +617,7 @@ class OnnxEncoder(nn.Module):
         return encoder_out, encoder_out_lens
 
 
-class OnnxDecoder(nn.Module):
+class OnnxDecoder(torch.nn.Module):
     """A wrapper for Decoder and the decoder_proj from the joiner."""
 
     def __init__(self, decoder, decoder_proj):
@@ -635,7 +633,7 @@ class OnnxDecoder(nn.Module):
         return output
 
 
-class OnnxJoiner(nn.Module):
+class OnnxJoiner(torch.nn.Module):
     """A wrapper for the joiner."""
 
     def __init__(self, output_linear):
@@ -830,7 +828,7 @@ def export_onnx_transducer(params, model):
 # ==============================================================================
 
 
-class OnnxCtcModel(nn.Module):
+class OnnxCtcModel(torch.nn.Module):
     """A wrapper for encoder_embed, Zipformer, and ctc_output layer (non-streaming)."""
 
     def __init__(self, encoder, encoder_embed, ctc_output):
@@ -922,7 +920,7 @@ def export_onnx_ctc(params, model):
 # ==============================================================================
 
 
-class OnnxStreamingEncoder(nn.Module):
+class OnnxStreamingEncoder(torch.nn.Module):
     """A wrapper for Zipformer and the encoder_proj from the joiner (streaming)."""
 
     def __init__(self, encoder, encoder_embed, encoder_proj):
@@ -1123,7 +1121,7 @@ def export_onnx_streaming_transducer(params, model):
 # ==============================================================================
 
 
-class OnnxStreamingCtcModel(nn.Module):
+class OnnxStreamingCtcModel(torch.nn.Module):
     """A wrapper for Zipformer and the ctc_head (streaming)."""
 
     def __init__(self, encoder, encoder_embed, ctc_output):

@@ -15,11 +15,10 @@
 # limitations under the License.
 
 import torch
-import torch.nn as nn
 from zipformer.modules.scaling import ScaledLinear
 
 
-class Joiner(nn.Module):
+class Joiner(torch.nn.Module):
     def __init__(
         self,
         encoder_dim: int,
@@ -31,7 +30,7 @@ class Joiner(nn.Module):
 
         self.encoder_proj = ScaledLinear(encoder_dim, joiner_dim, initial_scale=0.25)
         self.decoder_proj = ScaledLinear(decoder_dim, joiner_dim, initial_scale=0.25)
-        self.output_linear = nn.Linear(joiner_dim, vocab_size)
+        self.output_linear = torch.nn.Linear(joiner_dim, vocab_size)
 
     def forward(
         self,

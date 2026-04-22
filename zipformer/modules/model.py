@@ -20,7 +20,6 @@ from typing import Optional, Tuple, Union, List
 
 import k2
 import torch
-import torch.nn as nn
 from lhotse.dataset import SpecAugment
 from zipformer.modules.scaling import ScaledLinear
 from zipformer.utils.utils import (
@@ -42,7 +41,7 @@ def _to_int_tuple(s: str):
     return tuple(map(int, s.split(",")))
 
 
-class AsrModel(nn.Module):
+class AsrModel(torch.nn.Module):
     def __init__(
         self,
         feature_dim: int = 80,
@@ -183,10 +182,10 @@ class AsrModel(nn.Module):
 
         self.use_ctc = use_ctc
         if use_ctc:
-            self.ctc_output = nn.Sequential(
-                nn.Dropout(p=0.1),
-                nn.Linear(self.encoder_out_dim, vocab_size),
-                nn.LogSoftmax(dim=-1),
+            self.ctc_output = torch.nn.Sequential(
+                torch.nn.Dropout(p=0.1),
+                torch.nn.Linear(self.encoder_out_dim, vocab_size),
+                torch.nn.LogSoftmax(dim=-1),
             )
         else:
             self.ctc_output = None
@@ -303,7 +302,7 @@ class AsrModel(nn.Module):
         assert batch_size % 2 == 0, batch_size
         # exchange: [x1, x2] -> [x2, x1]
         exchanged_targets = torch.roll(ctc_output.detach(), batch_size // 2, dims=0)
-        cr_loss = nn.functional.kl_div(
+        cr_loss = torch.nn.functional.kl_div(
             input=ctc_output,
             target=exchanged_targets,
             reduction="none",

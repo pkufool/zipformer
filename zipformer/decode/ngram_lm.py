@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import kaldifst
+
 from collections import defaultdict
 from typing import List, Optional, Tuple
 
@@ -90,7 +92,6 @@ class NgramLm:
         self, state: int, label: int
     ) -> Tuple[int, float]:
         """TODO: Add doc."""
-        import kaldifst
 
         arc_iter = kaldifst.ArcIterator(self.lm, state)
         num_arcs = self.lm.num_arcs(state)

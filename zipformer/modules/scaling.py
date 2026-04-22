@@ -1,6 +1,6 @@
 # Copyright    2022-2023  Xiaomi Corp.        (authors: Daniel Povey)
 #
-# See ../../../../LICENSE for clarification regarding multiple authors
+# See ../../LICENSE for clarification regarding multiple authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,8 +22,6 @@ from typing import Optional, Tuple, Union
 
 import k2
 import torch
-import torch.nn as nn
-from torch import Tensor
 from zipformer.utils.utils import torch_autocast
 
 
@@ -45,7 +43,7 @@ custom_fwd = custom_amp_decorator(custom_fwd, deprecated)
 custom_bwd = custom_amp_decorator(custom_bwd, deprecated)
 
 
-def logaddexp_onnx(x: Tensor, y: Tensor) -> Tensor:
+def logaddexp_onnx(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     max_value = torch.max(x, y)
     diff = torch.abs(x - y)
     return max_value + torch.log1p(torch.exp(-diff))
@@ -57,7 +55,7 @@ def logaddexp_onnx(x: Tensor, y: Tensor) -> Tensor:
 #
 # The following function is to solve the above error when exporting
 # models to ONNX via torch.jit.trace()
-def logaddexp(x: Tensor, y: Tensor) -> Tensor:
+def logaddexp(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     # Caution(fangjun): Put torch.jit.is_scripting() before
     # torch.onnx.is_in_onnx_export();
     # otherwise, it will cause errors for torch.jit.script().
@@ -256,7 +254,7 @@ class ScheduledFloat(torch.nn.Module):
 FloatLike = Union[float, ScheduledFloat]
 
 
-def random_cast_to_half(x: Tensor, min_abs: float = 5.0e-06) -> Tensor:
+def random_cast_to_half(x: torch.Tensor, min_abs: float = 5.0e-06) -> torch.Tensor:
     """
     A randomized way of casting a floating point value to half precision.
     """
@@ -311,7 +309,7 @@ class SoftmaxFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, x: Tensor, dim: int):
+    def forward(ctx, x: torch.Tensor, dim: int):
         ans = x.softmax(dim=dim)
         # if x dtype is float16, x.softmax() returns a float32 because
         # (presumably) that op does not support float16, and autocast
@@ -324,7 +322,7 @@ class SoftmaxFunction(torch.autograd.Function):
         return ans
 
     @staticmethod
-    def backward(ctx, ans_grad: Tensor):
+    def backward(ctx, ans_grad: torch.Tensor):
         (ans,) = ctx.saved_tensors
         with torch_autocast(enabled=False):
             ans_grad = ans_grad.to(torch.float32)
@@ -334,7 +332,7 @@ class SoftmaxFunction(torch.autograd.Function):
             return x_grad, None
 
 
-def softmax(x: Tensor, dim: int):
+def softmax(x: torch.Tensor, dim: int):
     if not x.requires_grad or torch.jit.is_scripting() or torch.jit.is_tracing():
         return x.softmax(dim=dim)
 
@@ -345,12 +343,12 @@ class MaxEigLimiterFunction(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
-        x: Tensor,
-        coeffs: Tensor,
-        direction: Tensor,
+        x: torch.Tensor,
+        coeffs: torch.Tensor,
+        direction: torch.Tensor,
         channel_dim: int,
         grad_scale: float,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         ctx.channel_dim = channel_dim
         ctx.grad_scale = grad_scale
         ctx.save_for_backward(x.detach(), coeffs.detach(), direction.detach())
@@ -392,12 +390,12 @@ class BiasNormFunction(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
-        x: Tensor,
-        bias: Tensor,
-        log_scale: Tensor,
+        x: torch.Tensor,
+        bias: torch.Tensor,
+        log_scale: torch.Tensor,
         channel_dim: int,
         store_output_for_backprop: bool,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         assert bias.ndim == 1
         if channel_dim < 0:
             channel_dim = channel_dim + x.ndim
@@ -418,7 +416,7 @@ class BiasNormFunction(torch.autograd.Function):
         return ans
 
     @staticmethod
-    def backward(ctx, ans_grad: Tensor) -> Tensor:
+    def backward(ctx, ans_grad: torch.Tensor) -> torch.Tensor:
         ans_or_x, scales, bias, log_scale = ctx.saved_tensors
         if ctx.store_output_for_backprop:
             x = ans_or_x / scales
@@ -481,15 +479,15 @@ class BiasNorm(torch.nn.Module):
         super(BiasNorm, self).__init__()
         self.num_channels = num_channels
         self.channel_dim = channel_dim
-        self.log_scale = nn.Parameter(torch.tensor(log_scale))
-        self.bias = nn.Parameter(torch.empty(num_channels).normal_(mean=0, std=1e-4))
+        self.log_scale = torch.nn.Parameter(torch.tensor(log_scale))
+        self.bias = torch.nn.Parameter(torch.empty(num_channels).normal_(mean=0, std=1e-4))
 
         self.log_scale_min = log_scale_min
         self.log_scale_max = log_scale_max
 
         self.store_output_for_backprop = store_output_for_backprop
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         assert x.shape[self.channel_dim] == self.num_channels
 
         if torch.jit.is_scripting() or torch.jit.is_tracing():
@@ -516,13 +514,13 @@ class BiasNorm(torch.nn.Module):
         )
 
 
-def ScaledLinear(*args, initial_scale: float = 1.0, **kwargs) -> nn.Linear:
+def ScaledLinear(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Linear:
     """
-    Behaves like a constructor of a modified version of nn.Linear
+    Behaves like a constructor of a modified version of torch.nn.Linear
     that gives an easy way to set the default initial parameter scale.
 
     Args:
-        Accepts the standard args and kwargs that nn.Linear accepts
+        Accepts the standard args and kwargs that torch.nn.Linear accepts
         e.g. in_features, out_features, bias=False.
 
         initial_scale: you can override this if you want to increase
@@ -531,7 +529,7 @@ def ScaledLinear(*args, initial_scale: float = 1.0, **kwargs) -> nn.Linear:
            Another option, if you want to do something like this, is
            to re-initialize the parameters.
     """
-    ans = nn.Linear(*args, **kwargs)
+    ans = torch.nn.Linear(*args, **kwargs)
     with torch.no_grad():
         ans.weight[:] *= initial_scale
         if ans.bias is not None:
@@ -539,13 +537,13 @@ def ScaledLinear(*args, initial_scale: float = 1.0, **kwargs) -> nn.Linear:
     return ans
 
 
-def ScaledConv1d(*args, initial_scale: float = 1.0, **kwargs) -> nn.Conv1d:
+def ScaledConv1d(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Conv1d:
     """
-    Behaves like a constructor of a modified version of nn.Conv1d
+    Behaves like a constructor of a modified version of torch.nn.Conv1d
     that gives an easy way to set the default initial parameter scale.
 
     Args:
-        Accepts the standard args and kwargs that nn.Linear accepts
+        Accepts the standard args and kwargs that torch.nn.Linear accepts
         e.g. in_features, out_features, bias=False.
 
         initial_scale: you can override this if you want to increase
@@ -554,7 +552,7 @@ def ScaledConv1d(*args, initial_scale: float = 1.0, **kwargs) -> nn.Conv1d:
            Another option, if you want to do something like this, is
            to re-initialize the parameters.
     """
-    ans = nn.Conv1d(*args, **kwargs)
+    ans = torch.nn.Conv1d(*args, **kwargs)
     with torch.no_grad():
         ans.weight[:] *= initial_scale
         if ans.bias is not None:
@@ -562,13 +560,13 @@ def ScaledConv1d(*args, initial_scale: float = 1.0, **kwargs) -> nn.Conv1d:
     return ans
 
 
-def ScaledConv2d(*args, initial_scale: float = 1.0, **kwargs) -> nn.Conv2d:
+def ScaledConv2d(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Conv2d:
     """
-    Behaves like a constructor of a modified version of nn.Conv2d
+    Behaves like a constructor of a modified version of torch.nn.Conv2d
     that gives an easy way to set the default initial parameter scale.
 
     Args:
-        Accepts the standard args and kwargs that nn.Linear accepts
+        Accepts the standard args and kwargs that torch.nn.Linear accepts
         e.g. in_features, out_features, bias=False, but:
     NO PADDING-RELATED ARGS.
 
@@ -578,7 +576,7 @@ def ScaledConv2d(*args, initial_scale: float = 1.0, **kwargs) -> nn.Conv2d:
            Another option, if you want to do something like this, is
            to re-initialize the parameters.
     """
-    ans = nn.Conv2d(*args, **kwargs)
+    ans = torch.nn.Conv2d(*args, **kwargs)
     with torch.no_grad():
         ans.weight[:] *= initial_scale
         if ans.bias is not None:
@@ -601,7 +599,7 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
     on the position within the chunk.
 
     Args:
-        Accepts the standard args and kwargs that nn.Linear accepts
+        Accepts the standard args and kwargs that torch.nn.Linear accepts
         e.g. in_features, out_features, bias=False.
 
         initial_scale: you can override this if you want to increase
@@ -623,7 +621,7 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
 
         half_kernel_size = (kernel_size + 1) // 2
         # will pad manually, on one side.
-        self.causal_conv = nn.Conv1d(
+        self.causal_conv = torch.nn.Conv1d(
             in_channels=channels,
             out_channels=channels,
             groups=channels,
@@ -632,7 +630,7 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
             bias=True,
         )
 
-        self.chunkwise_conv = nn.Conv1d(
+        self.chunkwise_conv = torch.nn.Conv1d(
             in_channels=channels,
             out_channels=channels,
             groups=channels,
@@ -644,7 +642,7 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
         # first row is correction factors added to the scale near the left edge of the chunk,
         # second row is correction factors added to the scale near the right edge of the chunk,
         # both of these are added to a default scale of 1.0.
-        self.chunkwise_conv_scale = nn.Parameter(torch.zeros(2, channels, kernel_size))
+        self.chunkwise_conv_scale = torch.nn.Parameter(torch.zeros(2, channels, kernel_size))
         self.kernel_size = kernel_size
 
         with torch.no_grad():
@@ -655,11 +653,11 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
                     self.causal_conv.bias, -0.1 * initial_scale, 0.1 * initial_scale
                 )
 
-    def forward(self, x: Tensor, chunk_size: int = -1) -> Tensor:
+    def forward(self, x: torch.Tensor, chunk_size: int = -1) -> torch.Tensor:
         """Forward function.
 
         Args:
-               x: a Tensor of shape (batch_size, channels, seq_len)
+               x: a torch.Tensor of shape (batch_size, channels, seq_len)
         chunk_size: the chunk size, in frames; does not have to divide seq_len exactly.
         """
         (batch_size, num_channels, seq_len) = x.shape
@@ -719,13 +717,13 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
 
     def streaming_forward(
         self,
-        x: Tensor,
-        cache: Tensor,
-    ) -> Tuple[Tensor, Tensor]:
+        x: torch.Tensor,
+        cache: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Streaming Forward function.
 
         Args:
-            x: a Tensor of shape (batch_size, channels, seq_len)
+            x: a torch.Tensor of shape (batch_size, channels, seq_len)
             cache: cached left context of shape (batch_size, channels, left_pad)
         """
         (batch_size, num_channels, seq_len) = x.shape
@@ -757,14 +755,14 @@ class BalancerFunction(torch.autograd.Function):
     @staticmethod
     def forward(
         ctx,
-        x: Tensor,
+        x: torch.Tensor,
         min_mean: float,
         max_mean: float,
         min_rms: float,
         max_rms: float,
         grad_scale: float,
         channel_dim: int,
-    ) -> Tensor:
+    ) -> torch.Tensor:
         if channel_dim < 0:
             channel_dim += x.ndim
         ctx.channel_dim = channel_dim
@@ -773,7 +771,7 @@ class BalancerFunction(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, x_grad: Tensor) -> Tuple[Tensor, None, None, None, None, None]:
+    def backward(ctx, x_grad: torch.Tensor) -> Tuple[torch.Tensor, None, None, None, None, None]:
         (x,) = ctx.saved_tensors
         (min_mean, max_mean, min_rms, max_rms, grad_scale, channel_dim) = ctx.config
 
@@ -886,7 +884,7 @@ class Balancer(torch.nn.Module):
         self.max_abs = max_abs
         self.grad_scale = grad_scale
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if (
             torch.jit.is_scripting()
             or not x.requires_grad
@@ -942,8 +940,8 @@ class Balancer(torch.nn.Module):
 
 
 def penalize_abs_values_gt(
-    x: Tensor, limit: float, penalty: float, name: str = None
-) -> Tensor:
+    x: torch.Tensor, limit: float, penalty: float, name: str = None
+) -> torch.Tensor:
     """
     Returns x unmodified, but in backprop will put a penalty for the excess of
     the absolute values of elements of x over the limit "limit".  E.g. if
@@ -973,7 +971,7 @@ def penalize_abs_values_gt(
     return x
 
 
-def _diag(x: Tensor):  # like .diag(), but works for tensors with 3 dims.
+def _diag(x: torch.Tensor):  # like .diag(), but works for tensors with 3 dims.
     if x.ndim == 2:
         return x.diag()
     else:
@@ -984,16 +982,16 @@ def _diag(x: Tensor):  # like .diag(), but works for tensors with 3 dims.
         return x
 
 
-def _whitening_metric(x: Tensor, num_groups: int):
+def _whitening_metric(x: torch.Tensor, num_groups: int):
     """
     Computes the "whitening metric", a value which will be 1.0 if all the eigenvalues of
     of the centered feature covariance are the same within each group's covariance matrix
     and also between groups.
     Args:
-        x: a Tensor of shape (*, num_channels)
+        x: a torch.Tensor of shape (*, num_channels)
      num_groups:  the number of groups of channels, a number >=1 that divides num_channels
     Returns:
-        Returns a scalar Tensor that will be 1.0 if the data is "perfectly white" and
+        Returns a scalar torch.Tensor that will be 1.0 if the data is "perfectly white" and
     greater than 1.0 otherwise.
     """
     assert x.dtype != torch.float16
@@ -1022,13 +1020,13 @@ def _whitening_metric(x: Tensor, num_groups: int):
 
 class WhiteningPenaltyFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: Tensor, module: nn.Module) -> Tensor:
+    def forward(ctx, x: torch.Tensor, module: torch.nn.Module) -> torch.Tensor:
         ctx.save_for_backward(x)
         ctx.module = module
         return x
 
     @staticmethod
-    def backward(ctx, x_grad: Tensor):
+    def backward(ctx, x_grad: torch.Tensor):
         (x_orig,) = ctx.saved_tensors
         w = ctx.module
 
@@ -1066,7 +1064,7 @@ class WhiteningPenaltyFunction(torch.autograd.Function):
         return x_grad, None
 
 
-class Whiten(nn.Module):
+class Whiten(torch.nn.Module):
     def __init__(
         self,
         num_groups: int,
@@ -1107,7 +1105,7 @@ class Whiten(nn.Module):
         self.prob = self.max_prob
         self.name = None  # will be set in training loop
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         In the forward pass, this function just returns the input unmodified.
         In the backward pass, it will modify the gradients to ensure that the
@@ -1133,7 +1131,7 @@ class Whiten(nn.Module):
 
 class WithLoss(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: Tensor, y: Tensor, name: str):
+    def forward(ctx, x: torch.Tensor, y: torch.Tensor, name: str):
         ctx.y_shape = y.shape
         if random.random() < 0.002 and name is not None:
             loss_sum = y.sum().item()
@@ -1141,7 +1139,7 @@ class WithLoss(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, ans_grad: Tensor):
+    def backward(ctx, ans_grad: torch.Tensor):
         return (
             ans_grad,
             torch.ones(ctx.y_shape, dtype=ans_grad.dtype, device=ans_grad.device),
@@ -1156,25 +1154,25 @@ def with_loss(x, y, name):
 
 class ScaleGradFunction(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: Tensor, alpha: float) -> Tensor:
+    def forward(ctx, x: torch.Tensor, alpha: float) -> torch.Tensor:
         ctx.alpha = alpha
         return x
 
     @staticmethod
-    def backward(ctx, grad: Tensor):
+    def backward(ctx, grad: torch.Tensor):
         return grad * ctx.alpha, None
 
 
-def scale_grad(x: Tensor, alpha: float):
+def scale_grad(x: torch.Tensor, alpha: float):
     return ScaleGradFunction.apply(x, alpha)
 
 
-class ScaleGrad(nn.Module):
+class ScaleGrad(torch.nn.Module):
     def __init__(self, alpha: float):
         super().__init__()
         self.alpha = alpha
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if torch.jit.is_scripting() or torch.jit.is_tracing() or not self.training:
             return x
         return scale_grad(x, self.alpha)
@@ -1182,7 +1180,7 @@ class ScaleGrad(nn.Module):
 
 class LimitParamValue(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x: Tensor, min: float, max: float):
+    def forward(ctx, x: torch.Tensor, min: float, max: float):
         ctx.save_for_backward(x)
         assert max >= min
         ctx.min = min
@@ -1190,7 +1188,7 @@ class LimitParamValue(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, x_grad: Tensor):
+    def backward(ctx, x_grad: torch.Tensor):
         (x,) = ctx.saved_tensors
         # where x < ctx.min, ensure all grads are negative (this will tend to make
         # x more positive).
@@ -1204,9 +1202,9 @@ class LimitParamValue(torch.autograd.Function):
 
 
 def limit_param_value(
-    x: Tensor, min: float, max: float, prob: float = 0.6, training: bool = True
+    x: torch.Tensor, min: float, max: float, prob: float = 0.6, training: bool = True
 ):
-    # You apply this to (typically) an nn.Parameter during training to ensure that its
+    # You apply this to (typically) an torch.nn.Parameter during training to ensure that its
     # (elements mostly) stays within a supplied range.  This is done by modifying the
     # gradients in backprop.
     # It's not necessary to do this on every batch: do it only some of the time,
@@ -1217,7 +1215,7 @@ def limit_param_value(
         return x
 
 
-def _no_op(x: Tensor) -> Tensor:
+def _no_op(x: torch.Tensor) -> torch.Tensor:
     if torch.jit.is_scripting() or torch.jit.is_tracing():
         return x
     else:
@@ -1252,7 +1250,7 @@ class DoubleSwishFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, x: Tensor) -> Tensor:
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
         requires_grad = x.requires_grad
         if x.dtype == torch.float16 or x.dtype == torch.bfloat16:
             x = x.to(torch.float32)
@@ -1285,7 +1283,7 @@ class DoubleSwishFunction(torch.autograd.Function):
         return y
 
     @staticmethod
-    def backward(ctx, y_grad: Tensor) -> Tensor:
+    def backward(ctx, y_grad: torch.Tensor) -> torch.Tensor:
         (d,) = ctx.saved_tensors
         # the same constants as used in forward pass.
         floor = -0.043637
@@ -1299,7 +1297,7 @@ class DoubleSwish(torch.nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return double-swish activation function which is an approximation to Swish(Swish(x)),
         that we approximate closely with x * sigmoid(x-1).
         """
@@ -1309,12 +1307,12 @@ class DoubleSwish(torch.nn.Module):
 
 
 # Dropout2 is just like normal dropout, except it supports schedules on the dropout rates.
-class Dropout2(nn.Module):
+class Dropout2(torch.nn.Module):
     def __init__(self, p: FloatLike):
         super().__init__()
         self.p = p
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.dropout(x, p=float(self.p), training=self.training)
 
 
@@ -1340,13 +1338,13 @@ class MulForDropout3(torch.autograd.Function):
 
 # Dropout3 is just like normal dropout, except it supports schedules on the dropout rates,
 # and it lets you choose one dimension to share the dropout mask over
-class Dropout3(nn.Module):
+class Dropout3(torch.nn.Module):
     def __init__(self, p: FloatLike, shared_dim: int):
         super().__init__()
         self.p = p
         self.shared_dim = shared_dim
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         p = float(self.p)
         if not self.training or p == 0:
             return _no_op(x)
@@ -1364,7 +1362,7 @@ class SwooshLFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, x: Tensor) -> Tensor:
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
         requires_grad = x.requires_grad
         if x.dtype == torch.float16 or x.dtype == torch.bfloat16:
             x = x.to(torch.float32)
@@ -1403,7 +1401,7 @@ class SwooshLFunction(torch.autograd.Function):
                 return y
 
     @staticmethod
-    def backward(ctx, y_grad: Tensor) -> Tensor:
+    def backward(ctx, y_grad: torch.Tensor) -> torch.Tensor:
         (d,) = ctx.saved_tensors
         # the same constants as used in forward pass.
 
@@ -1415,7 +1413,7 @@ class SwooshLFunction(torch.autograd.Function):
 
 
 class SwooshL(torch.nn.Module):
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return Swoosh-L activation."""
         if torch.jit.is_scripting() or torch.jit.is_tracing():
             zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
@@ -1428,7 +1426,7 @@ class SwooshL(torch.nn.Module):
 
 
 class SwooshLOnnx(torch.nn.Module):
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return Swoosh-L activation."""
         zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
         return logaddexp_onnx(zero, x - 4.0) - 0.08 * x - 0.035
@@ -1442,7 +1440,7 @@ class SwooshRFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, x: Tensor) -> Tensor:
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
         requires_grad = x.requires_grad
 
         if x.dtype == torch.float16 or x.dtype == torch.bfloat16:
@@ -1479,7 +1477,7 @@ class SwooshRFunction(torch.autograd.Function):
                 return y
 
     @staticmethod
-    def backward(ctx, y_grad: Tensor) -> Tensor:
+    def backward(ctx, y_grad: torch.Tensor) -> torch.Tensor:
         (d,) = ctx.saved_tensors
         # the same constants as used in forward pass.
         floor = -0.08
@@ -1489,7 +1487,7 @@ class SwooshRFunction(torch.autograd.Function):
 
 
 class SwooshR(torch.nn.Module):
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return Swoosh-R activation."""
         if torch.jit.is_scripting() or torch.jit.is_tracing():
             zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
@@ -1502,7 +1500,7 @@ class SwooshR(torch.nn.Module):
 
 
 class SwooshROnnx(torch.nn.Module):
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return Swoosh-R activation."""
         zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
         return logaddexp_onnx(zero, x - 1.0) - 0.08 * x - 0.313261687
@@ -1510,7 +1508,7 @@ class SwooshROnnx(torch.nn.Module):
 
 # simple version of SwooshL that does not redefine the backprop, used in
 # ActivationDropoutAndLinearFunction.
-def SwooshLForward(x: Tensor):
+def SwooshLForward(x: torch.Tensor):
     x_offset = x - 4.0
     log_sum = (1.0 + x_offset.exp()).log().to(x.dtype)
     log_sum = torch.where(log_sum == float("inf"), x_offset, log_sum)
@@ -1519,7 +1517,7 @@ def SwooshLForward(x: Tensor):
 
 # simple version of SwooshR that does not redefine the backprop, used in
 # ActivationDropoutAndLinearFunction.
-def SwooshRForward(x: Tensor):
+def SwooshRForward(x: torch.Tensor):
     x_offset = x - 1.0
     log_sum = (1.0 + x_offset.exp()).log().to(x.dtype)
     log_sum = torch.where(log_sum == float("inf"), x_offset, log_sum)
@@ -1531,9 +1529,9 @@ class ActivationDropoutAndLinearFunction(torch.autograd.Function):
     @custom_fwd
     def forward(
         ctx,
-        x: Tensor,
-        weight: Tensor,
-        bias: Optional[Tensor],
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        bias: Optional[torch.Tensor],
         activation: str,
         dropout_p: float,
         dropout_shared_dim: Optional[int],
@@ -1568,7 +1566,7 @@ class ActivationDropoutAndLinearFunction(torch.autograd.Function):
 
     @staticmethod
     @custom_bwd
-    def backward(ctx, ans_grad: Tensor):
+    def backward(ctx, ans_grad: torch.Tensor):
         saved = ctx.saved_tensors
         (x, weight, bias, dropout_mask) = saved
 
@@ -1602,11 +1600,11 @@ class ActivationDropoutAndLinearFunction(torch.autograd.Function):
 
 class ActivationDropoutAndLinear(torch.nn.Module):
     """
-     This merges an activation function followed by dropout and then a nn.Linear module;
+     This merges an activation function followed by dropout and then a torch.nn.Linear module;
      it does so in a memory efficient way so that it only stores the input to the whole
      module.  If activation == SwooshL and dropout_shared_dim != None, this will be
      equivalent to:
-       nn.Sequential(SwooshL(),
+       torch.nn.Sequential(SwooshL(),
                      Dropout3(dropout_p, shared_dim=dropout_shared_dim),
                      ScaledLinear(in_channels, out_channels, bias=bias,
                                   initial_scale=initial_scale))
@@ -1637,7 +1635,7 @@ class ActivationDropoutAndLinear(torch.nn.Module):
         initial_scale: float = 1.0,
     ):
         super().__init__()
-        # create a temporary module of nn.Linear that we'll steal the
+        # create a temporary module of torch.nn.Linear that we'll steal the
         # weights and bias from
         l = ScaledLinear(
             in_channels, out_channels, bias=bias, initial_scale=initial_scale
@@ -1654,7 +1652,7 @@ class ActivationDropoutAndLinear(torch.nn.Module):
         self.dropout_p = dropout_p
         self.dropout_shared_dim = dropout_shared_dim
 
-    def forward(self, x: Tensor):
+    def forward(self, x: torch.Tensor):
         if not self.training or torch.jit.is_scripting() or torch.jit.is_tracing():
             if self.activation == "SwooshL":
                 x = SwooshLForward(x)
@@ -1674,7 +1672,7 @@ class ActivationDropoutAndLinear(torch.nn.Module):
         )
 
 
-def convert_num_channels(x: Tensor, num_channels: int) -> Tensor:
+def convert_num_channels(x: torch.Tensor, num_channels: int) -> torch.Tensor:
     if num_channels <= x.shape[-1]:
         return x[..., :num_channels]
     else:
@@ -1855,7 +1853,7 @@ def _test_activation_dropout_and_linear():
         # internally, messing up the random state.
         for dropout_p in [0.0]:
             for activation in ["SwooshL", "SwooshR"]:
-                m1 = nn.Sequential(
+                m1 = torch.nn.Sequential(
                     SwooshL() if activation == "SwooshL" else SwooshR(),
                     Dropout3(p=dropout_p, shared_dim=-1),
                     ScaledLinear(

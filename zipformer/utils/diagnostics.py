@@ -23,9 +23,6 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
-from torch import Tensor, nn
-
-
 class TensorDiagnosticOptions(object):
     """Options object for tensor diagnostics:
 
@@ -43,10 +40,10 @@ class TensorDiagnosticOptions(object):
 
 
 def get_tensor_stats(
-    x: Tensor,
+    x: torch.Tensor,
     dim: int,
     stats_type: str,
-) -> Tuple[Tensor, int]:
+) -> Tuple[torch.Tensor, int]:
     """
     Returns the specified transformation of the Tensor (either x or x.abs()
     or (x > 0), summed over all but the index `dim`.
@@ -112,7 +109,7 @@ def get_tensor_stats(
 
 @dataclass
 class TensorAndCount:
-    tensor: Tensor
+    tensor: torch.Tensor
     count: int
 
 
@@ -160,7 +157,7 @@ class TensorDiagnostic(object):
             self.class_name = class_name
         if isinstance(x, Tuple):
             x = x[0]
-        if not isinstance(x, Tensor):
+        if not isinstance(x, torch.Tensor):
             return
         if x.numel() == 0:  # for empty tensor
             return
@@ -355,7 +352,7 @@ class ScalarDiagnostic(object):
         self.sum_gradsq = None
         self.sum_abs_grad = None
 
-    def accumulate_input(self, x: Tensor, class_name: Optional[str] = None):
+    def accumulate_input(self, x: torch.Tensor, class_name: Optional[str] = None):
         """
         Called in forward pass.
         """
@@ -379,7 +376,7 @@ class ScalarDiagnostic(object):
             return
         self.saved_inputs.append(x)
 
-    def accumulate_output_grad(self, grad: Tensor):
+    def accumulate_output_grad(self, grad: torch.Tensor):
         if not self.is_ok:
             return
         if self.is_forward_pass:
@@ -400,7 +397,7 @@ class ScalarDiagnostic(object):
         x = self.saved_inputs.pop()
         self.process_input_and_grad(x, grad)
 
-    def process_input_and_grad(self, x: Tensor, grad: Tensor):
+    def process_input_and_grad(self, x: torch.Tensor, grad: torch.Tensor):
         assert x.shape == grad.shape
         x = x.flatten()
         grad = grad.flatten()
@@ -495,7 +492,7 @@ class ScalarDiagnostic(object):
         bin_rel_grad = bin_grad / (bin_abs_grad + 1.0e-20)
         bin_conf = bin_grad / (bin_conf_interval + 1.0e-20)
 
-        def tensor_to_str(x: Tensor):
+        def tensor_to_str(x: torch.Tensor):
             x = ["%.2g" % f for f in x]
             x = "[" + " ".join(x) + "]"
             return x
@@ -539,7 +536,7 @@ class ModelDiagnostic(object):
             self.diagnostics[k].print_diagnostics()
 
 
-def get_class_name(module: nn.Module):
+def get_class_name(module: torch.nn.Module):
     ans = type(module).__name__
     # we put the below in try blocks in case anyone is using a different version of these modules that
     # might have different member names.
@@ -557,7 +554,7 @@ def get_class_name(module: nn.Module):
 
 
 def attach_diagnostics(
-    model: nn.Module, opts: Optional[TensorDiagnosticOptions] = None
+    model: torch.nn.Module, opts: Optional[TensorDiagnosticOptions] = None
 ) -> ModelDiagnostic:
     """Attach a ModelDiagnostic object to the model by
     1) registering forward hook and backward hook on each module, to accumulate
@@ -589,7 +586,7 @@ def attach_diagnostics(
             if isinstance(_output, tuple) and len(_output) == 1:
                 _output = _output[0]
 
-            if isinstance(_output, Tensor) and _output.dtype in (
+            if isinstance(_output, torch.Tensor) and _output.dtype in (
                 torch.float32,
                 torch.float16,
                 torch.float64,
@@ -599,7 +596,7 @@ def attach_diagnostics(
                 )
             elif isinstance(_output, tuple):
                 for i, o in enumerate(_output):
-                    if isinstance(o, Tensor) and o.dtype in (
+                    if isinstance(o, torch.Tensor) and o.dtype in (
                         torch.float32,
                         torch.float16,
                         torch.float64,
@@ -611,7 +608,7 @@ def attach_diagnostics(
         def backward_hook(_module, _input, _output, _model_diagnostic=ans, _name=name):
             if isinstance(_output, tuple) and len(_output) == 1:
                 _output = _output[0]
-            if isinstance(_output, Tensor) and _output.dtype in (
+            if isinstance(_output, torch.Tensor) and _output.dtype in (
                 torch.float32,
                 torch.float16,
                 torch.float64,
@@ -621,7 +618,7 @@ def attach_diagnostics(
                 )
             elif isinstance(_output, tuple):
                 for i, o in enumerate(_output):
-                    if isinstance(o, Tensor) and o.dtype in (
+                    if isinstance(o, torch.Tensor) and o.dtype in (
                         torch.float32,
                         torch.float16,
                         torch.float64,
@@ -654,7 +651,7 @@ def attach_diagnostics(
             ):
                 if isinstance(_input, tuple):
                     (_input,) = _input
-                assert isinstance(_input, Tensor)
+                assert isinstance(_input, torch.Tensor)
                 _model_diagnostic[f"{_name}.scalar"].accumulate_input(
                     _input, class_name=get_class_name(_module)
                 )
@@ -664,7 +661,7 @@ def attach_diagnostics(
             ):
                 if isinstance(_output, tuple):
                     (_output,) = _output
-                assert isinstance(_output, Tensor)
+                assert isinstance(_output, torch.Tensor)
                 _model_diagnostic[f"{_name}.scalar"].accumulate_output_grad(_output)
 
             module.register_forward_hook(scalar_forward_hook)
@@ -702,7 +699,7 @@ def _test_tensor_diagnostic():
 
     diagnostic.print_diagnostics()
 
-    model = nn.Sequential(nn.Linear(100, 50), nn.ReLU(), nn.Linear(50, 80))
+    model = torch.nn.Sequential(torch.nn.Linear(100, 50), torch.nn.ReLU(), torch.nn.Linear(50, 80))
 
     diagnostic = attach_diagnostics(model, opts)
     for _ in range(10):

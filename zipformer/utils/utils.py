@@ -17,7 +17,6 @@ from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
 import kaldialign
 import torch
 import torch.distributed as dist
-import torch.nn as nn
 from lhotse.dataset.signal_transforms import time_warp as time_warp_impl
 from packaging import version
 from torch.utils.tensorboard import SummaryWriter
@@ -303,7 +302,7 @@ def make_pad_mask(
 
 
 def get_parameter_groups_with_lrs(
-    model: nn.Module,
+    model: torch.nn.Module,
     lr: float,
     include_names: bool = False,
     freeze_modules: List[str] = [],
