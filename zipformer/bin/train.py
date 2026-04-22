@@ -1282,7 +1282,7 @@ def filter_func(sample: Dict[str, Any], sp: Ssentencepiece, sample_rate: int) ->
 
 
 def map_func(sample):
-    text = sample["label"].lower()
+    text = sample["label"]
     text = re.sub(r"[,.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     sample["label"] = text

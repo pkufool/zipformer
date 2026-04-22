@@ -579,7 +579,7 @@ def modified_beam_search(
 
         # Scoring nnlm for shallow fusion
         new_nnlm_scores, new_nnlm_states = _score_nnlm(
-            hyps=A,
+            A=A,
             per_utt_topk=per_utt_topk,
             nnlm=nnlm,
             vocab_size=vocab_size,

@@ -201,10 +201,6 @@ def decode_batch_rnnt(
     feature = batch["feature"].to(device)
     feature_lens = batch["feature_lens"].to(device)
 
-    logging.info(
-        f"feature shape: {feature.shape}, feature_lens shape: {feature_lens.shape}"
-    )
-
     if params.causal:
         pad_len = 30
         feature_lens = feature_lens + pad_len
@@ -289,7 +285,7 @@ def decode_dataset(
     log_interval = 20
 
     for batch_idx, batch in enumerate(tqdm(dl, total=len(dl))):
-        texts = batch["label"]
+        texts = batch["text"]
         cut_ids = batch["ids"]
         if not cut_ids:
             cut_ids = list(range(len(texts)))

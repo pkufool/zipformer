@@ -185,6 +185,10 @@ def write_error_stats(
 
 class MetricsTracker(collections.defaultdict):
     def __init__(self):
+        # Passing the type 'int' to the base-class constructor
+        # makes undefined items default to int() which is zero.
+        # This class will play a role as metrics tracker.
+        # It can record many metrics, including but not limited to loss.
         super(MetricsTracker, self).__init__(int)
 
     def __add__(self, other: "MetricsTracker") -> "MetricsTracker":
@@ -202,12 +206,39 @@ class MetricsTracker(collections.defaultdict):
             ans[k] = v * alpha
         return ans
 
+    def __str__(self) -> str:
+        ans_frames = ""
+        ans_utterances = ""
+        for k, v in self.norm_items():
+            norm_value = "%.4g" % v
+            if "utt_" not in k:
+                ans_frames += str(k) + "=" + str(norm_value) + ", "
+            else:
+                ans_utterances += str(k) + "=" + str(norm_value)
+                if k == "utt_duration":
+                    ans_utterances += " frames, "
+                elif k == "utt_pad_proportion":
+                    ans_utterances += ", "
+                else:
+                    raise ValueError(f"Unexpected key: {k}")
+        frames = "%.2f" % self["frames"]
+        ans_frames += "over " + str(frames) + " frames. "
+        if ans_utterances != "":
+            utterances = "%.2f" % self["utterances"]
+            ans_utterances += "over " + str(utterances) + " utterances."
+
+        return ans_frames + ans_utterances
+
     def norm_items(self) -> List[Tuple[str, float]]:
+        """
+        Returns a list of pairs, like:
+          [('ctc_loss', 0.1), ('att_loss', 0.07)]
+        """
         num_frames = self["frames"] if "frames" in self else 1
         num_utterances = self["utterances"] if "utterances" in self else 1
         ans = []
         for k, v in self.items():
-            if k in ("frames", "utterances"):
+            if k == "frames" or k == "utterances":
                 continue
             norm_value = (
                 float(v) / num_frames if "utt_" not in k else float(v) / num_utterances
@@ -216,6 +247,10 @@ class MetricsTracker(collections.defaultdict):
         return ans
 
     def reduce(self, device):
+        """
+        Reduce using torch.distributed, which I believe ensures that
+        all processes get the total.
+        """
         keys = sorted(self.keys())
         s = torch.tensor([float(self[k]) for k in keys], device=device)
         dist.all_reduce(s, op=dist.ReduceOp.SUM)
@@ -223,8 +258,19 @@ class MetricsTracker(collections.defaultdict):
             self[k] = v
 
     def write_summary(
-        self, tb_writer: SummaryWriter, prefix: str, batch_idx: int
+        self,
+        tb_writer: SummaryWriter,
+        prefix: str,
+        batch_idx: int,
     ) -> None:
+        """Add logging information to a TensorBoard writer.
+
+        Args:
+            tb_writer: a TensorBoard writer
+            prefix: a prefix for the name of the loss, e.g. "train/valid_",
+                or "train/current_"
+            batch_idx: The current batch index, used as the x-axis of the plot.
+        """
         for k, v in self.norm_items():
             tb_writer.add_scalar(prefix + k, v, batch_idx)
 
