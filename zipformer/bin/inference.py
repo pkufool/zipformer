@@ -78,12 +78,27 @@ Usage examples:
     --nn-model ./exp/ctc-streaming.onnx \\
     --tokens ./data/lang_bpe_500/tokens.txt \\
     /path/to/foo.wav /path/to/bar.wav
+
+(7) Download model from HuggingFace (JIT):
+
+  python inference.py \\
+    --model-type jit \\
+    --hf-model ks-fsa/zipformer-medium-v1 \\
+    /path/to/foo.wav /path/to/bar.wav
+
+(8) Download model from HuggingFace (ONNX transducer):
+
+  python inference.py \\
+    --model-type onnx \\
+    --hf-model ks-fsa/zipformer-medium-v1 \\
+    /path/to/foo.wav /path/to/bar.wav
 """
 
 import argparse
 import logging
 import math
 import time
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -166,8 +181,18 @@ def get_parser():
     parser.add_argument(
         "--tokens",
         type=str,
-        required=True,
-        help="Path to tokens.txt.",
+        default="",
+        help="Path to tokens.txt. If not provided and --hf-model is set, "
+        "defaults to data/lang_bpe_500/tokens.txt inside the repo.",
+    )
+
+    parser.add_argument(
+        "--hf-model",
+        type=str,
+        default="",
+        help="HuggingFace repo ID, e.g., 'ks-fsa/zipformer-medium-v1'. "
+        "If specified, the model and tokens will be downloaded from "
+        "HuggingFace automatically.",
     )
 
     parser.add_argument(
@@ -187,6 +212,23 @@ def get_parser():
     )
 
     return parser
+
+
+# ==============================================================================
+# HuggingFace model download
+# ==============================================================================
+
+
+def download_hf_model(repo_id: str) -> Path:
+    """Download a HuggingFace model repo using huggingface_hub.
+
+    Returns the local cache directory path where the repo is downloaded.
+    """
+    from huggingface_hub import snapshot_download
+
+    local_dir = snapshot_download(repo_id=repo_id)
+    logging.info(f"Downloaded HuggingFace model '{repo_id}' to {local_dir}")
+    return Path(local_dir)
 
 
 # ==============================================================================
@@ -1117,9 +1159,111 @@ def print_results(results: List[dict], elapsed: float):
 # ==============================================================================
 
 
+def _resolve_hf_model_paths(args, hf_dir: Path):
+    """When --hf-model is used, auto-resolve model file paths from the repo."""
+    import glob
+
+    # Auto-resolve tokens
+    if not args.tokens:
+        tokens_path = hf_dir / "data" / "lang_bpe_500" / "tokens.txt"
+        if tokens_path.exists():
+            args.tokens = str(tokens_path)
+            logging.info(f"Auto-resolved tokens: {args.tokens}")
+        else:
+            raise ValueError(
+                f"--tokens not provided and default path not found in repo: "
+                f"{tokens_path}. Please specify --tokens explicitly."
+            )
+
+    # Auto-resolve model file paths
+    if args.model_type == "jit":
+        if not args.nn_model_filename:
+            # Try common JIT model naming patterns
+            candidates = [
+                "exp/jit_script.pt",
+                "exp/jit_script_chunk_16_left_128.pt",
+            ]
+            for cand in candidates:
+                p = hf_dir / cand
+                if p.exists():
+                    args.nn_model_filename = str(p)
+                    logging.info(f"Auto-resolved JIT model: {args.nn_model_filename}")
+                    break
+            if not args.nn_model_filename:
+                raise ValueError(
+                    f"--nn-model-filename not provided and no JIT model found in "
+                    f"repo. Please specify --nn-model-filename explicitly."
+                )
+    elif args.model_type == "onnx":
+        if args.ctc:
+            if not args.nn_model:
+                candidates = ["exp/model.onnx", "exp/ctc.onnx"]
+                for cand in candidates:
+                    p = hf_dir / cand
+                    if p.exists():
+                        args.nn_model = str(p)
+                        logging.info(f"Auto-resolved ONNX CTC model: {args.nn_model}")
+                        break
+                if not args.nn_model:
+                    raise ValueError(
+                        f"--nn-model not provided and no ONNX CTC model found in "
+                        f"repo. Please specify --nn-model explicitly."
+                    )
+        else:
+            # Transducer: resolve encoder, decoder, joiner
+            if not args.encoder_model_filename:
+                for pattern in ["exp/encoder*.onnx", "exp/encoder-*.onnx"]:
+                    matches = sorted(glob.glob(str(hf_dir / pattern)))
+                    if matches:
+                        args.encoder_model_filename = matches[-1]
+                        logging.info(
+                            f"Auto-resolved encoder: {args.encoder_model_filename}"
+                        )
+                        break
+            if not args.decoder_model_filename:
+                for pattern in ["exp/decoder*.onnx", "exp/decoder-*.onnx"]:
+                    matches = sorted(glob.glob(str(hf_dir / pattern)))
+                    if matches:
+                        args.decoder_model_filename = matches[-1]
+                        logging.info(
+                            f"Auto-resolved decoder: {args.decoder_model_filename}"
+                        )
+                        break
+            if not args.joiner_model_filename:
+                for pattern in ["exp/joiner*.onnx", "exp/joiner-*.onnx"]:
+                    matches = sorted(glob.glob(str(hf_dir / pattern)))
+                    if matches:
+                        args.joiner_model_filename = matches[-1]
+                        logging.info(
+                            f"Auto-resolved joiner: {args.joiner_model_filename}"
+                        )
+                        break
+
+            missing = []
+            if not args.encoder_model_filename:
+                missing.append("--encoder-model-filename")
+            if not args.decoder_model_filename:
+                missing.append("--decoder-model-filename")
+            if not args.joiner_model_filename:
+                missing.append("--joiner-model-filename")
+            if missing:
+                raise ValueError(
+                    f"Could not auto-resolve: {', '.join(missing)}. "
+                    f"Please specify them explicitly."
+                )
+
+
 @torch.no_grad()
 def main():
     args = get_parser().parse_args()
+
+    if args.hf_model:
+        hf_dir = download_hf_model(args.hf_model)
+        _resolve_hf_model_paths(args, hf_dir)
+
+    if not args.tokens:
+        raise ValueError("--tokens is required when --hf-model is not used.")
+
     logging.info(vars(args))
 
     start_time = time.time()

@@ -27,7 +27,6 @@ from zipformer.utils.utils import torch_autocast
 def custom_amp_decorator(dec, cuda_amp_deprecated):
     def decorator(func):
         return dec(func) if not cuda_amp_deprecated else dec(device_type="cuda")(func)
-
     return decorator
 
 
@@ -54,35 +53,39 @@ def torch_compile(fn, *args, **kwargs):
     return fn
 
 
+# Numerically stable softplus: softplus(x) = log(1 + exp(x))
+# Uses identity: softplus(x) = max(x,0) + log1p(exp(-|x|))
+# Avoids exp overflow and is torch.compile friendly (no control flow).
+def _softplus(x: torch.Tensor) -> torch.Tensor:
+    return torch.clamp(x, min=0) + torch.log1p(torch.exp(-torch.abs(x)))
+
+
+# pure PyTorch swoosh_l: swoosh_l(x) = log(1 + exp(x-4)) - 0.08*x - 0.035
 def _swooshl(x: torch.Tensor) -> torch.Tensor:
-    zero = torch.zeros_like(x)
-    return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
+    return _softplus(x - 4.0) - 0.08 * x - 0.035
 
 
+# pure PyTorch swoosh_r: swoosh_r(x) = log(1 + exp(x-1)) - 0.08*x - 0.313261687
 def _swooshr(x: torch.Tensor) -> torch.Tensor:
-    zero = torch.zeros_like(x)
-    return logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
+    return _softplus(x - 1.0) - 0.08 * x - 0.313261687
 
 
 def _swooshl_and_deriv(x: torch.Tensor):
     x_offset = x - 4.0
-    denom = 1.0 + x_offset.exp()
-    inv_denom = 1.0 / denom  # note: 1 / infinity = 0.
-    deriv = 0.92 - inv_denom
-    log_denom = denom.log()
-    log_denom = torch.where(torch.isinf(log_denom), x_offset, log_denom)
-    y = log_denom - 0.08 * x - 0.035
+    # sigmoid is numerically stable and has efficient CUDA implementation
+    s = torch.sigmoid(x_offset)
+    y = _softplus(x_offset) - 0.08 * x - 0.035
+    # deriv of swoosh_l = sigmoid(x_offset) - 0.08
+    deriv = s - 0.08
     return y, deriv
 
 
 def _swooshr_and_deriv(x: torch.Tensor):
     x_offset = x - 1.0
-    denom = 1.0 + x_offset.exp()
-    inv_denom = 1.0 / denom  # note: 1 / infinity = 0.
-    deriv = 0.92 - inv_denom
-    log_denom = denom.log()
-    log_denom = torch.where(torch.isinf(log_denom), x_offset, log_denom)
-    y = log_denom - 0.08 * x - 0.313261687
+    s = torch.sigmoid(x_offset)
+    y = _softplus(x_offset) - 0.08 * x - 0.313261687
+    # deriv of swoosh_r = sigmoid(x_offset) - 0.08
+    deriv = s - 0.08
     return y, deriv
 
 
@@ -297,21 +300,6 @@ class ScheduledFloat(torch.nn.Module):
 FloatLike = Union[float, ScheduledFloat]
 
 
-def random_cast_to_half(x: torch.Tensor, min_abs: float = 5.0e-06) -> torch.Tensor:
-    """
-    A randomized way of casting a floating point value to half precision.
-    """
-    if x.dtype == torch.float16:
-        return x
-    x_abs = x.abs()
-    is_too_small = x_abs < min_abs
-    # for elements where is_too_small is true, random_val will contain +-min_abs with
-    # probability (x.abs() / min_abs), and 0.0 otherwise.  [so this preserves expectations,
-    # for those elements].
-    random_val = min_abs * x.sign() * (torch.rand_like(x) * min_abs < x_abs)
-    return torch.where(is_too_small, random_val, x).to(torch.float16)
-
-
 class CutoffEstimator:
     """
     Estimates cutoffs of an arbitrary numerical quantity such that a specified
@@ -380,47 +368,6 @@ def softmax(x: torch.Tensor, dim: int):
         return x.softmax(dim=dim)
 
     return SoftmaxFunction.apply(x, dim)
-
-
-class MaxEigLimiterFunction(torch.autograd.Function):
-    @staticmethod
-    def forward(
-        ctx,
-        x: torch.Tensor,
-        coeffs: torch.Tensor,
-        direction: torch.Tensor,
-        channel_dim: int,
-        grad_scale: float,
-    ) -> torch.Tensor:
-        ctx.channel_dim = channel_dim
-        ctx.grad_scale = grad_scale
-        ctx.save_for_backward(x.detach(), coeffs.detach(), direction.detach())
-        return x
-
-    @staticmethod
-    def backward(ctx, x_grad, *args):
-        with torch.enable_grad():
-            (x_orig, coeffs, new_direction) = ctx.saved_tensors
-            x_orig.requires_grad = True
-            num_channels = x_orig.shape[ctx.channel_dim]
-            x = x_orig.transpose(ctx.channel_dim, -1).reshape(-1, num_channels)
-            new_direction.requires_grad = False
-            x = x - x.mean(dim=0)
-            x_var = (x**2).mean()
-            x_residual = x - coeffs * new_direction
-            x_residual_var = (x_residual**2).mean()
-            # `variance_proportion` is the proportion of the variance accounted for
-            # by the top eigen-direction.  This is to be minimized.
-            variance_proportion = (x_var - x_residual_var) / (x_var + 1.0e-20)
-            variance_proportion.backward()
-        x_orig_grad = x_orig.grad
-        x_extra_grad = (
-            x_orig.grad
-            * ctx.grad_scale
-            * x_grad.norm()
-            / (x_orig_grad.norm() + 1.0e-20)
-        )
-        return x_grad + x_extra_grad.detach(), None, None, None, None
 
 
 class BiasNormFunction(torch.autograd.Function):
@@ -573,29 +520,6 @@ def ScaledLinear(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Linear
            to re-initialize the parameters.
     """
     ans = torch.nn.Linear(*args, **kwargs)
-    with torch.no_grad():
-        ans.weight[:] *= initial_scale
-        if ans.bias is not None:
-            torch.nn.init.uniform_(ans.bias, -0.1 * initial_scale, 0.1 * initial_scale)
-    return ans
-
-
-def ScaledConv1d(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Conv1d:
-    """
-    Behaves like a constructor of a modified version of torch.nn.Conv1d
-    that gives an easy way to set the default initial parameter scale.
-
-    Args:
-        Accepts the standard args and kwargs that torch.nn.Linear accepts
-        e.g. in_features, out_features, bias=False.
-
-        initial_scale: you can override this if you want to increase
-           or decrease the initial magnitude of the module's output
-           (affects the initialization of weight_scale and bias_scale).
-           Another option, if you want to do something like this, is
-           to re-initialize the parameters.
-    """
-    ans = torch.nn.Conv1d(*args, **kwargs)
     with torch.no_grad():
         ans.weight[:] *= initial_scale
         if ans.bias is not None:
@@ -1463,16 +1387,9 @@ class SwooshL(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return Swoosh-L activation."""
         if torch.jit.is_scripting() or torch.jit.is_tracing():
-            zero = torch.zeros_like(x)
+            zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
             return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
         return self.func(x)
-
-
-class SwooshLOnnx(torch.nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return Swoosh-L activation."""
-        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
-        return logaddexp_onnx(zero, x - 4.0) - 0.08 * x - 0.035
 
 
 class SwooshRFunction(torch.autograd.Function):
@@ -1537,30 +1454,21 @@ class SwooshR(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Return Swoosh-R activation."""
         if torch.jit.is_scripting() or torch.jit.is_tracing():
-            zero = torch.zeros_like(x)
+            zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
             return logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
         return self.func(x)
-
-
-class SwooshROnnx(torch.nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return Swoosh-R activation."""
-        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
-        return logaddexp_onnx(zero, x - 1.0) - 0.08 * x - 0.313261687
 
 
 # simple version of SwooshL that does not redefine the backprop, used in
 # ActivationDropoutAndLinearFunction.
 def SwooshLForward(x: torch.Tensor):
-    zero = torch.zeros_like(x)
-    return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
+    return _softplus(x - 4.0) - 0.08 * x - 0.035
 
 
 # simple version of SwooshR that does not redefine the backprop, used in
 # ActivationDropoutAndLinearFunction.
 def SwooshRForward(x: torch.Tensor):
-    zero = torch.zeros_like(x)
-    return logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
+    return _softplus(x - 1.0) - 0.08 * x - 0.313261687
 
 
 class ActivationDropoutAndLinearFunction(torch.autograd.Function):
@@ -1879,9 +1787,8 @@ def _test_activation_dropout_and_linear():
 
     for bias in [True, False]:
         # actually we don't test for dropout_p != 0.0 because forward functions will give
-        # different answers.  This is because we are using the k2 implementation of
-        # swoosh_l an swoosh_r inside SwooshL() and SwooshR(), and they call randn()
-        # internally, messing up the random state.
+        # different answers due to the non-deterministic behavior of the fused
+        # activation-dropout-linear path.
         for dropout_p in [0.0]:
             for activation in ["SwooshL", "SwooshR"]:
                 m1 = torch.nn.Sequential(

@@ -39,11 +39,25 @@ from zipformer.utils.utils import (
     write_error_stats,
     tokenize_by_cjk_char,
 )
+
 from ssentencepiece import Ssentencepiece
 from tqdm import tqdm
 from atdataset import ATDataloader, FbankExtractor
 
 LOG_EPS = math.log(1e-10)
+
+
+def download_hf_model(repo_id: str) -> Path:
+    """Download a HuggingFace model repo using huggingface_hub.
+
+    Returns the local cache directory path where the repo is downloaded.
+    """
+    from huggingface_hub import snapshot_download
+
+    local_dir = snapshot_download(repo_id=repo_id)
+    logging.info(f"Downloaded HuggingFace model '{repo_id}' to {local_dir}")
+    return Path(local_dir)
+
 
 ALLOWED_METHODS = {
     "rnnt-greedy-search",
@@ -65,6 +79,14 @@ def get_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--exp-dir", type=str, default="zipformer/exp")
     parser.add_argument("--bpe-model", type=str, default="data/lang_bpe_500/bpe.model")
+    parser.add_argument(
+        "--hf-model",
+        type=str,
+        default="",
+        help="HuggingFace repo ID, e.g., 'ks-fsa/zipformer-medium-v1'. "
+        "If specified, the model will be downloaded from HuggingFace "
+        "and --exp-dir will be overridden.",
+    )
 
     parser.add_argument(
         "--decoding-method",
@@ -374,7 +396,15 @@ def filter_func(sample):
 def main():
     parser = get_parser()
     args = parser.parse_args()
-    args.exp_dir = Path(args.exp_dir)
+
+    if args.hf_model:
+        args.exp_dir = download_hf_model(args.hf_model)
+        # Auto-resolve bpe_model from the downloaded repo
+        default_bpe = args.exp_dir / "data" / "lang_bpe_500" / "bpe.model"
+        if default_bpe.exists():
+            args.bpe_model = str(default_bpe)
+    else:
+        args.exp_dir = Path(args.exp_dir)
 
     params = get_params()
     params.update(vars(args))

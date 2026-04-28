@@ -2,3 +2,4 @@ simple-sentencepiece
 torch
 atdataset
 torchaudio
+huggingface_hub

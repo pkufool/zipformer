@@ -617,6 +617,13 @@ def get_parser():
     )
 
     parser.add_argument(
+        "--use-noise-augment",
+        type=str2bool,
+        default=True,
+        help="Whether to use noise augment for training.",
+    )
+
+    parser.add_argument(
         "--noise-list",
         type=str,
         default="data/tars/musan.lst",
@@ -642,13 +649,6 @@ def get_parser():
         type=str2bool,
         default=False,
         help="Whether to use rir augment for training.",
-    )
-
-    parser.add_argument(
-        "--rir-augment-prob",
-        type=float,
-        default=0.05,
-        help="The probability to apply rir augment.",
     )
 
     parser.add_argument(
@@ -1408,9 +1408,9 @@ def run(local_rank, world_size, args):
 
     training_sets = params.training_sets
     training_weights = None
-    assert training_sets is not None and len(training_sets) > 0, (
-        "training_sets must be provided"
-    )
+    assert (
+        training_sets is not None and len(training_sets) > 0
+    ), "training_sets must be provided"
     if params.training_weights is not None:
         training_weights = list(map(float, params.training_weights.split(",")))
         assert len(training_weights) == len(training_sets)
@@ -1440,9 +1440,10 @@ def run(local_rank, world_size, args):
         filter_func=_filter_func,
         feature_extractor=feature_extractor,
         sample_rate=params.sample_rate,
+        use_noise_augment=params.use_noise_augment,
         noise_manifest=params.noise_list,
-        speed_perturb=(0.9, 1.0, 1.1) if params.use_speed_perturb else None,
-        volume_perturb=(0.5, -10, 6) if params.use_volume_perturb else None,
+        use_speed_perturb=params.use_speed_perturb,
+        use_volume_perturb=params.use_volume_perturb,
         is_test=False,
         num_workers=params.num_workers,
     )
@@ -1541,7 +1542,7 @@ def display_and_save_batch(
 
     logging.info(f"feature shape: {feature.shape}")
 
-    y = sp.encode(batch["texts"], out_type=int)
+    y = sp.encode(batch["text"], out_type=int)
     num_tokens = sum(len(i) for i in y)
     logging.info(f"num tokens: {num_tokens}")
 
