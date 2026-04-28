@@ -1,4 +1,5 @@
-# Copyright    2022-2023  Xiaomi Corp.        (authors: Daniel Povey)
+# Copyright    2022-2026  Xiaomi Corp.        (authors: Daniel Povey，
+#                                                       Wei Kang)
 #
 # See ../../LICENSE for clarification regarding multiple authors
 #
@@ -115,6 +116,46 @@ def logaddexp(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     else:
         # for torch.jit.trace()
         return torch.logaddexp(x, y)
+
+
+class SwooshL(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.func = torch_compile(_swooshl)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return Swoosh-L activation."""
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            zero = torch.zeros_like(x)
+            return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
+        return self.func(x)
+
+
+class SwooshLOnnx(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return Swoosh-L activation."""
+        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
+        return logaddexp_onnx(zero, x - 4.0) - 0.08 * x - 0.035
+
+
+class SwooshR(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.func = torch_compile(_swooshr)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return Swoosh-R activation."""
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            zero = torch.zeros_like(x)
+            return logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
+        return self.func(x)
+
+
+class SwooshROnnx(torch.nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return Swoosh-R activation."""
+        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
+        return logaddexp_onnx(zero, x - 1.0) - 0.08 * x - 0.313261687
 
 
 class PiecewiseLinear(object):
@@ -295,21 +336,6 @@ class ScheduledFloat(torch.nn.Module):
 
 
 FloatLike = Union[float, ScheduledFloat]
-
-
-def random_cast_to_half(x: torch.Tensor, min_abs: float = 5.0e-06) -> torch.Tensor:
-    """
-    A randomized way of casting a floating point value to half precision.
-    """
-    if x.dtype == torch.float16:
-        return x
-    x_abs = x.abs()
-    is_too_small = x_abs < min_abs
-    # for elements where is_too_small is true, random_val will contain +-min_abs with
-    # probability (x.abs() / min_abs), and 0.0 otherwise.  [so this preserves expectations,
-    # for those elements].
-    random_val = min_abs * x.sign() * (torch.rand_like(x) * min_abs < x_abs)
-    return torch.where(is_too_small, random_val, x).to(torch.float16)
 
 
 class CutoffEstimator:
@@ -573,29 +599,6 @@ def ScaledLinear(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Linear
            to re-initialize the parameters.
     """
     ans = torch.nn.Linear(*args, **kwargs)
-    with torch.no_grad():
-        ans.weight[:] *= initial_scale
-        if ans.bias is not None:
-            torch.nn.init.uniform_(ans.bias, -0.1 * initial_scale, 0.1 * initial_scale)
-    return ans
-
-
-def ScaledConv1d(*args, initial_scale: float = 1.0, **kwargs) -> torch.nn.Conv1d:
-    """
-    Behaves like a constructor of a modified version of torch.nn.Conv1d
-    that gives an easy way to set the default initial parameter scale.
-
-    Args:
-        Accepts the standard args and kwargs that torch.nn.Linear accepts
-        e.g. in_features, out_features, bias=False.
-
-        initial_scale: you can override this if you want to increase
-           or decrease the initial magnitude of the module's output
-           (affects the initialization of weight_scale and bias_scale).
-           Another option, if you want to do something like this, is
-           to re-initialize the parameters.
-    """
-    ans = torch.nn.Conv1d(*args, **kwargs)
     with torch.no_grad():
         ans.weight[:] *= initial_scale
         if ans.bias is not None:
@@ -1399,170 +1402,6 @@ class Dropout3(torch.nn.Module):
         return ans
 
 
-class SwooshLFunction(torch.autograd.Function):
-    """
-    swoosh_l(x) =  log(1 + exp(x-4)) - 0.08*x - 0.035
-    """
-
-    @staticmethod
-    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
-        requires_grad = x.requires_grad
-        if x.dtype == torch.float16 or x.dtype == torch.bfloat16:
-            x = x.to(torch.float32)
-
-        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
-
-        coeff = -0.08
-
-        with torch_autocast(enabled=False):
-            with torch.enable_grad():
-                x = x.detach()
-                x.requires_grad = True
-                y = torch.logaddexp(zero, x - 4.0) + coeff * x - 0.035
-
-                if not requires_grad:
-                    return y
-
-                y.backward(gradient=torch.ones_like(y))
-
-                grad = x.grad
-                floor = coeff
-                ceil = 1.0 + coeff + 0.005
-
-                d_scaled = (grad - floor) * (255.0 / (ceil - floor)) + torch.rand_like(
-                    grad
-                )
-                if __name__ == "__main__":
-                    # for self-testing only.
-                    assert d_scaled.min() >= 0.0
-                    assert d_scaled.max() < 256.0
-
-                d_int = d_scaled.to(torch.uint8)
-                ctx.save_for_backward(d_int)
-                if x.dtype == torch.float16 or torch.is_autocast_enabled():
-                    y = y.to(torch.get_autocast_gpu_dtype())
-                return y
-
-    @staticmethod
-    def backward(ctx, y_grad: torch.Tensor) -> torch.Tensor:
-        (d,) = ctx.saved_tensors
-        # the same constants as used in forward pass.
-
-        coeff = -0.08
-        floor = coeff
-        ceil = 1.0 + coeff + 0.005
-        d = d * ((ceil - floor) / 255.0) + floor
-        return y_grad * d
-
-
-class SwooshL(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.func = torch_compile(_swooshl)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return Swoosh-L activation."""
-        if torch.jit.is_scripting() or torch.jit.is_tracing():
-            zero = torch.zeros_like(x)
-            return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
-        return self.func(x)
-
-
-class SwooshLOnnx(torch.nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return Swoosh-L activation."""
-        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
-        return logaddexp_onnx(zero, x - 4.0) - 0.08 * x - 0.035
-
-
-class SwooshRFunction(torch.autograd.Function):
-    """
-     swoosh_r(x) =  log(1 + exp(x-1)) - 0.08*x - 0.313261687
-
-    derivatives are between -0.08 and 0.92.
-    """
-
-    @staticmethod
-    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
-        requires_grad = x.requires_grad
-
-        if x.dtype == torch.float16 or x.dtype == torch.bfloat16:
-            x = x.to(torch.float32)
-
-        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
-
-        with torch_autocast(enabled=False):
-            with torch.enable_grad():
-                x = x.detach()
-                x.requires_grad = True
-                y = torch.logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
-
-                if not requires_grad:
-                    return y
-                y.backward(gradient=torch.ones_like(y))
-
-                grad = x.grad
-                floor = -0.08
-                ceil = 0.925
-
-                d_scaled = (grad - floor) * (255.0 / (ceil - floor)) + torch.rand_like(
-                    grad
-                )
-                if __name__ == "__main__":
-                    # for self-testing only.
-                    assert d_scaled.min() >= 0.0
-                    assert d_scaled.max() < 256.0
-
-                d_int = d_scaled.to(torch.uint8)
-                ctx.save_for_backward(d_int)
-                if x.dtype == torch.float16 or torch.is_autocast_enabled():
-                    y = y.to(torch.get_autocast_gpu_dtype())
-                return y
-
-    @staticmethod
-    def backward(ctx, y_grad: torch.Tensor) -> torch.Tensor:
-        (d,) = ctx.saved_tensors
-        # the same constants as used in forward pass.
-        floor = -0.08
-        ceil = 0.925
-        d = d * ((ceil - floor) / 255.0) + floor
-        return y_grad * d
-
-
-class SwooshR(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.func = torch_compile(_swooshr)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return Swoosh-R activation."""
-        if torch.jit.is_scripting() or torch.jit.is_tracing():
-            zero = torch.zeros_like(x)
-            return logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
-        return self.func(x)
-
-
-class SwooshROnnx(torch.nn.Module):
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return Swoosh-R activation."""
-        zero = torch.tensor(0.0, dtype=x.dtype, device=x.device)
-        return logaddexp_onnx(zero, x - 1.0) - 0.08 * x - 0.313261687
-
-
-# simple version of SwooshL that does not redefine the backprop, used in
-# ActivationDropoutAndLinearFunction.
-def SwooshLForward(x: torch.Tensor):
-    zero = torch.zeros_like(x)
-    return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
-
-
-# simple version of SwooshR that does not redefine the backprop, used in
-# ActivationDropoutAndLinearFunction.
-def SwooshRForward(x: torch.Tensor):
-    zero = torch.zeros_like(x)
-    return logaddexp(zero, x - 1.0) - 0.08 * x - 0.313261687
-
-
 class ActivationDropoutAndLinearFunction(torch.autograd.Function):
     @staticmethod
     @custom_fwd
@@ -1906,11 +1745,6 @@ def _test_activation_dropout_and_linear():
                 # make sure forward gives same result.
                 x1 = torch.randn(10, in_channels)
                 x1.requires_grad = True
-
-                # TEMP.
-                assert torch.allclose(
-                    SwooshRFunction.apply(x1), SwooshRForward(x1), atol=1.0e-03
-                )
 
                 x2 = x1.clone().detach()
                 x2.requires_grad = True
