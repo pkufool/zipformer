@@ -29,6 +29,12 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.optional-dependencies]
+docs = [
+  "mkdocs-material>=9.0",
+  "mkdocstrings[python]>=0.24",
+]
+
 [project.scripts]
 zipformer = "zipformer.cli:main"
 
@@ -38,5 +44,9 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["zipformer", "zipformer.*"]
 
-[tool.black]
+[tool.ruff]
 line-length = 88
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

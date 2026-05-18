@@ -28,3 +28,9 @@ epoch 150 avg 30: 1.92 / 4.15
 
 exp-large-cr-ctc-rnnt2
 epoch 50 avg :
+
+
+
+pip install pre-commit
+cd zipformer
+pre-commit install
