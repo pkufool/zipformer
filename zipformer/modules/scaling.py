@@ -55,6 +55,37 @@ def torch_compile(fn, *args, **kwargs):
     return fn
 
 
+def logaddexp_onnx(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    max_value = torch.max(x, y)
+    diff = torch.abs(x - y)
+    return max_value + torch.log1p(torch.exp(-diff))
+
+
+# RuntimeError: Exporting the operator logaddexp to ONNX opset version
+# 14 is not supported. Please feel free to request support or submit
+# a pull request on PyTorch GitHub.
+#
+# The following function is to solve the above error when exporting
+# models to ONNX via torch.jit.trace()
+def logaddexp(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    # Caution(fangjun): Put torch.jit.is_scripting() before
+    # torch.onnx.is_in_onnx_export();
+    # otherwise, it will cause errors for torch.jit.script().
+    #
+    # torch.logaddexp() works for both torch.jit.script() and
+    # torch.jit.trace() but it causes errors for ONNX export.
+    #
+    if torch.jit.is_scripting():
+        # Note: We cannot use torch.jit.is_tracing() here as it also
+        # matches torch.onnx.export().
+        return torch.logaddexp(x, y)
+    elif torch.onnx.is_in_onnx_export():
+        return logaddexp_onnx(x, y)
+    else:
+        # for torch.jit.trace()
+        return torch.logaddexp(x, y)
+
+
 def _swooshl(x: torch.Tensor) -> torch.Tensor:
     zero = torch.zeros_like(x)
     return logaddexp(zero, x - 4.0) - 0.08 * x - 0.035
@@ -85,37 +116,6 @@ def _swooshr_and_deriv(x: torch.Tensor):
     log_denom = torch.where(torch.isinf(log_denom), x_offset, log_denom)
     y = log_denom - 0.08 * x - 0.313261687
     return y, deriv
-
-
-def logaddexp_onnx(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    max_value = torch.max(x, y)
-    diff = torch.abs(x - y)
-    return max_value + torch.log1p(torch.exp(-diff))
-
-
-# RuntimeError: Exporting the operator logaddexp to ONNX opset version
-# 14 is not supported. Please feel free to request support or submit
-# a pull request on PyTorch GitHub.
-#
-# The following function is to solve the above error when exporting
-# models to ONNX via torch.jit.trace()
-def logaddexp(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    # Caution(fangjun): Put torch.jit.is_scripting() before
-    # torch.onnx.is_in_onnx_export();
-    # otherwise, it will cause errors for torch.jit.script().
-    #
-    # torch.logaddexp() works for both torch.jit.script() and
-    # torch.jit.trace() but it causes errors for ONNX export.
-    #
-    if torch.jit.is_scripting():
-        # Note: We cannot use torch.jit.is_tracing() here as it also
-        # matches torch.onnx.export().
-        return torch.logaddexp(x, y)
-    elif torch.onnx.is_in_onnx_export():
-        return logaddexp_onnx(x, y)
-    else:
-        # for torch.jit.trace()
-        return torch.logaddexp(x, y)
 
 
 class SwooshL(torch.nn.Module):
@@ -1528,7 +1528,7 @@ class ActivationDropoutAndLinear(torch.nn.Module):
 
     def forward(self, x: torch.Tensor):
         if not self.training or torch.jit.is_scripting() or torch.jit.is_tracing():
-            self.forward_func(x)
+            x = self.forward_func(x)
             return torch.nn.functional.linear(x, self.weight, self.bias)
 
         return ActivationDropoutAndLinearFunction.apply(
