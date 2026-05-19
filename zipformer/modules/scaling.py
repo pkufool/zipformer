@@ -549,7 +549,9 @@ class BiasNorm(torch.nn.Module):
         self.num_channels = num_channels
         self.channel_dim = channel_dim
         self.log_scale = torch.nn.Parameter(torch.tensor(log_scale))
-        self.bias = torch.nn.Parameter(torch.empty(num_channels).normal_(mean=0, std=1e-4))
+        self.bias = torch.nn.Parameter(
+            torch.empty(num_channels).normal_(mean=0, std=1e-4)
+        )
 
         self.log_scale_min = log_scale_min
         self.log_scale_max = log_scale_max
@@ -688,7 +690,9 @@ class ChunkCausalDepthwiseConv1d(torch.nn.Module):
         # first row is correction factors added to the scale near the left edge of the chunk,
         # second row is correction factors added to the scale near the right edge of the chunk,
         # both of these are added to a default scale of 1.0.
-        self.chunkwise_conv_scale = torch.nn.Parameter(torch.zeros(2, channels, kernel_size))
+        self.chunkwise_conv_scale = torch.nn.Parameter(
+            torch.zeros(2, channels, kernel_size)
+        )
         self.kernel_size = kernel_size
 
         with torch.no_grad():
@@ -817,7 +821,9 @@ class BalancerFunction(torch.autograd.Function):
         return x
 
     @staticmethod
-    def backward(ctx, x_grad: torch.Tensor) -> Tuple[torch.Tensor, None, None, None, None, None]:
+    def backward(
+        ctx, x_grad: torch.Tensor
+    ) -> Tuple[torch.Tensor, None, None, None, None, None]:
         (x,) = ctx.saved_tensors
         (min_mean, max_mean, min_rms, max_rms, grad_scale, channel_dim) = ctx.config
 
@@ -1504,16 +1510,16 @@ class ActivationDropoutAndLinear(torch.nn.Module):
         super().__init__()
         # create a temporary module of torch.nn.Linear that we'll steal the
         # weights and bias from
-        l = ScaledLinear(
+        linear = ScaledLinear(
             in_channels, out_channels, bias=bias, initial_scale=initial_scale
         )
 
-        self.weight = l.weight
-        # register_parameter properly handles making it a parameter when l.bias
+        self.weight = linear.weight
+        # register_parameter properly handles making it a parameter when linear.bias
         # is None. I think there is some reason for doing it this way rather
         # than just setting it to None but I don't know what it is, maybe
         # something to do with exporting the module..
-        self.register_parameter("bias", l.bias)
+        self.register_parameter("bias", linear.bias)
 
         self.activation = activation
         assert activation in ["SwooshL", "SwooshR"]
@@ -1527,7 +1533,17 @@ class ActivationDropoutAndLinear(torch.nn.Module):
         self.dropout_shared_dim = dropout_shared_dim
 
     def forward(self, x: torch.Tensor):
-        if not self.training or torch.jit.is_scripting() or torch.jit.is_tracing():
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            zero = torch.zeros_like(x)
+            if self.activation == "SwooshL":
+                x = logaddexp_onnx(zero, x - 4.0) - 0.08 * x - 0.035
+            elif self.activation == "SwooshR":
+                x = logaddexp_onnx(zero, x - 1.0) - 0.08 * x - 0.313261687
+            else:
+                raise ValueError(f"Unsupported activation: {self.activation}")
+            return torch.nn.functional.linear(x, self.weight, self.bias)
+
+        if not self.training:
             x = self.forward_func(x)
             return torch.nn.functional.linear(x, self.weight, self.bias)
 
@@ -1641,7 +1657,7 @@ def _test_double_swish_deriv():
     # for self-test.
     x = torch.randn(1000, 1000, dtype=torch.double) * 3.0
     x.requires_grad = True
-    y = m(x)
+    m(x)
 
 
 def _test_swooshl_deriv():
@@ -1655,7 +1671,7 @@ def _test_swooshl_deriv():
     # for self-test.
     x = torch.randn(1000, 1000, dtype=torch.double) * 3.0
     x.requires_grad = True
-    y = m(x)
+    m(x)
 
 
 def _test_swooshr_deriv():
@@ -1669,7 +1685,7 @@ def _test_swooshr_deriv():
     # for self-test.
     x = torch.randn(1000, 1000, dtype=torch.double) * 3.0
     x.requires_grad = True
-    y = m(x)
+    m(x)
 
 
 def _test_softmax():

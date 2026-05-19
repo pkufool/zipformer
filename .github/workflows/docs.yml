@@ -33,7 +33,9 @@ jobs:
         run: pip install -e ".[docs]"
 
       - name: Build docs
-        run: mkdocs build --strict
+        run: |
+          mkdocs build -f mkdocs.yml -d site
+          mkdocs build -f mkdocs-zh.yml -d site/zh
 
       - uses: actions/upload-pages-artifact@v3
         with:

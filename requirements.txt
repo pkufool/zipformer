@@ -3,3 +3,6 @@ torch
 atdataset
 torchaudio
 huggingface_hub
+onnx
+onnxconverter_common
+onnxruntime

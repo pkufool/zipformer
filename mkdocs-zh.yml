@@ -2,13 +2,13 @@ site_name: Zipformer
 site_url: https://pkufool.github.io/zipformer
 site_description: A faster and better encoder for ASR
 
-docs_dir: 'docs/en'
-site_dir: 'site'
+docs_dir: 'docs/zh'
+site_dir: 'site/zh'
 
 repo_name: pkufool/zipformer
 repo_url: https://github.com/pkufool/zipformer
 
-copyright: Copyright &copy; 2019 - 2026 Next-Gen Kaldi Team (XiaoMi Corp.)
+copyright: Copyright &copy; 2019 - 2026 新一代 Kaldi 团队 (小米集团)
 
 theme:
   name: material
@@ -26,13 +26,13 @@ theme:
     - content.tabs.link
 
 nav:
-  - Getting Started:
-    - Introduction: index.md
-    - Models: models.md
-    - Training: training.md
-    - Deployment: deployment.md
-  - API Reference: api/index.md
-  - Message: message.md
+  - 快速开始:
+    - 介绍: index.md
+    - 模型: models.md
+    - 训练: training.md
+    - 部署: deployment.md
+  - API 参考: api/index.md
+  - 留言: message.md
 
 plugins:
   - search:
@@ -72,7 +72,6 @@ extra:
     - name: 中文
       link: /zh/
       lang: zh
-
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/pkufool/zipformer

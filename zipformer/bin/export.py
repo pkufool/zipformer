@@ -267,7 +267,9 @@ def get_parser():
 class EncoderModel(torch.nn.Module):
     """A wrapper for encoder and encoder_embed (non-streaming JIT export)."""
 
-    def __init__(self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module) -> None:
+    def __init__(
+        self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module
+    ) -> None:
         super().__init__()
         self.encoder = encoder
         self.encoder_embed = encoder_embed
@@ -286,7 +288,9 @@ class EncoderModel(torch.nn.Module):
 class StreamingEncoderModel(torch.nn.Module):
     """A wrapper for encoder and encoder_embed (streaming JIT export)."""
 
-    def __init__(self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module) -> None:
+    def __init__(
+        self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module
+    ) -> None:
         super().__init__()
         assert len(encoder.chunk_size) == 1, encoder.chunk_size
         assert len(encoder.left_context_frames) == 1, encoder.left_context_frames
@@ -369,10 +373,10 @@ def export_torch(params, model):
             model.encoder = StreamingEncoderModel(model.encoder, model.encoder_embed)
             chunk_size = model.encoder.chunk_size
             left_context_len = model.encoder.left_context_len
-            filename = f"jit_script_chunk_{chunk_size}_left_{left_context_len}.pt"
+            filename = f"jit_model_chunk_{chunk_size}_left_{left_context_len}.pt"
         else:
             model.encoder = EncoderModel(model.encoder, model.encoder_embed)
-            filename = "jit_script.pt"
+            filename = "jit_model.pt"
 
         logging.info("Using torch.jit.script")
         model = torch.jit.script(model)
@@ -380,10 +384,9 @@ def export_torch(params, model):
         logging.info(f"Saved to {filename}")
     else:
         logging.info("Not using torchscript. Export model.state_dict()")
-        filename = params.exp_dir / "pretrained.pt"
+        filename = params.exp_dir / "model.pt"
         torch.save({"model": model.state_dict()}, str(filename))
         logging.info(f"Saved to {filename}")
-
 
 
 # ==============================================================================
@@ -418,22 +421,24 @@ def add_meta_data(
 
 
 def export_onnx_fp16(onnx_fp32_path, onnx_fp16_path):
-    import onnxmltools
-    from onnxmltools.utils.float16_converter import convert_float_to_float16
+    import onnx
+    from onnxconverter_common import float16
 
-    onnx_fp32_model = onnxmltools.utils.load_model(onnx_fp32_path)
-    onnx_fp16_model = convert_float_to_float16(onnx_fp32_model, keep_io_types=True)
-    onnxmltools.utils.save_model(onnx_fp16_model, onnx_fp16_path)
+    onnx_fp32_model = onnx.load_model(onnx_fp32_path)
+    onnx_fp16_model = float16.convert_float_to_float16(
+        onnx_fp32_model, keep_io_types=True
+    )
+    onnx.save_model(onnx_fp16_model, onnx_fp16_path)
 
 
 def export_onnx_fp16_large_2gb(onnx_fp32_path, onnx_fp16_path):
-    import onnxmltools
-    from onnxmltools.utils.float16_converter import convert_float_to_float16_model_path
+    import onnx
+    from onnxconverter_common import float16
 
-    onnx_fp16_model = convert_float_to_float16_model_path(
+    onnx_fp16_model = float16.convert_float_to_float16_model_path(
         onnx_fp32_path, keep_io_types=True
     )
-    onnxmltools.utils.save_model(onnx_fp16_model, onnx_fp16_path)
+    onnx.save_model(onnx_fp16_model, onnx_fp16_path)
 
 
 # ==============================================================================
@@ -650,7 +655,7 @@ def export_onnx_transducer(params, model):
         op_types_to_quantize=["MatMul"],
         weight_type=QuantType.QInt8,
     )
-    
+
     # We don't quantize the decoder since it may cause large accuracy drop.
 
     joiner_filename_int8 = params.exp_dir / f"joiner-{suffix}.int8.onnx"
@@ -758,6 +763,7 @@ def export_onnx_ctc(params, model):
 # ONNX Streaming Transducer
 # ==============================================================================
 
+
 def build_streaming_inputs_outputs(
     tensors, i, inputs, outputs, input_names, output_names
 ):
@@ -820,7 +826,7 @@ def get_streaming_meta_data(encoder_model, comment):
     left_context_len_list = [left_context_len // k for k in ds]
 
     meta_data = {
-        "model_type": "zipformer2",   # for compatibility with sherpa-onnx
+        "model_type": "zipformer2",  # for compatibility with sherpa-onnx
         "version": "1",
         "model_author": "k2-fsa",
         "comment": comment,

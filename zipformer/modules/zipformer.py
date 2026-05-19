@@ -150,12 +150,12 @@ class Zipformer(torch.nn.Module):
         for u, d in zip(encoder_unmasked_dim, encoder_dim):
             assert u <= d
 
-        # each one will be Zipformer2Encoder or DownsampledZipformer2Encoder
+        # each one will be ZipformerEncoder or DownsampledZipformerEncoder
         encoders = []
 
         num_encoders = len(downsampling_factor)
         for i in range(num_encoders):
-            encoder_layer = Zipformer2EncoderLayer(
+            encoder_layer = ZipformerEncoderLayer(
                 embed_dim=encoder_dim[i],
                 pos_dim=pos_dim,
                 num_heads=num_heads[i],
@@ -170,7 +170,7 @@ class Zipformer(torch.nn.Module):
 
             # For the segment of the warmup period, we let the Conv2dSubsampling
             # layer learn something.  Then we start to warm up the other encoders.
-            encoder = Zipformer2Encoder(
+            encoder = ZipformerEncoder(
                 encoder_layer,
                 num_encoder_layers[i],
                 pos_dim=pos_dim,
@@ -181,7 +181,7 @@ class Zipformer(torch.nn.Module):
             )
 
             if downsampling_factor[i] != 1:
-                encoder = DownsampledZipformer2Encoder(
+                encoder = DownsampledZipformerEncoder(
                     encoder,
                     dim=encoder_dim[i],
                     downsample=downsampling_factor[i],
@@ -200,7 +200,9 @@ class Zipformer(torch.nn.Module):
             causal=causal,
         )
 
-    def get_feature_masks(self, x: torch.Tensor) -> Union[List[float], List[torch.Tensor]]:
+    def get_feature_masks(
+        self, x: torch.Tensor
+    ) -> Union[List[float], List[torch.Tensor]]:
         """
         In eval mode, returns [1.0] * num_encoders; in training mode, returns a number of
         randomized feature masks, one per encoder.
@@ -542,7 +544,7 @@ def _balancer_schedule(min_prob: float):
     return ScheduledFloat((0.0, 0.4), (8000.0, min_prob))
 
 
-class Zipformer2EncoderLayer(torch.nn.Module):
+class ZipformerEncoderLayer(torch.nn.Module):
     """
     Args:
         embed_dim: the number of expected features in the input (required).
@@ -552,7 +554,7 @@ class Zipformer2EncoderLayer(torch.nn.Module):
         cnn_module_kernel (int): Kernel size of convolution module (default=31).
 
     Examples::
-        >>> encoder_layer = Zipformer2EncoderLayer(embed_dim=512, nhead=8)
+        >>> encoder_layer = ZipformerEncoderLayer(embed_dim=512, nhead=8)
         >>> src = torch.rand(10, 32, 512)
         >>> pos_emb = torch.rand(32, 19, 512)
         >>> out = encoder_layer(src, pos_emb)
@@ -589,7 +591,7 @@ class Zipformer2EncoderLayer(torch.nn.Module):
             (0.0, 0.5), (4000.0, 0.02), default=0
         ),
     ) -> None:
-        super(Zipformer2EncoderLayer, self).__init__()
+        super(ZipformerEncoderLayer, self).__init__()
         self.embed_dim = embed_dim
 
         # self.bypass implements layer skipping as well as bypass; see its default values.
@@ -885,7 +887,15 @@ class Zipformer2EncoderLayer(torch.nn.Module):
         cached_conv2: torch.Tensor,
         left_context_len: int,
         src_key_padding_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
         """Pass the input through the encoder layer in streaming forward mode.
 
         Args:
@@ -991,17 +1001,17 @@ class Zipformer2EncoderLayer(torch.nn.Module):
         )
 
 
-class Zipformer2Encoder(torch.nn.Module):
-    r"""Zipformer2Encoder is a stack of N encoder layers
+class ZipformerEncoder(torch.nn.Module):
+    r"""ZipformerEncoder is a stack of N encoder layers
 
     Args:
-        encoder_layer: an instance of the Zipformer2EncoderLayer() class (required).
+        encoder_layer: an instance of the ZipformerEncoderLayer() class (required).
         num_layers: the number of sub-encoder-layers in the encoder (required).
        pos_dim: the dimension for the relative positional encoding
 
     Examples::
-        >>> encoder_layer = Zipformer2EncoderLayer(embed_dim=512, nhead=8)
-        >>> zipformer_encoder = Zipformer2Encoder(encoder_layer, num_layers=6)
+        >>> encoder_layer = ZipformerEncoderLayer(embed_dim=512, nhead=8)
+        >>> zipformer_encoder = ZipformerEncoder(encoder_layer, num_layers=6)
         >>> src = torch.rand(10, 32, 512)
         >>> out = zipformer_encoder(src)
     """
@@ -1208,9 +1218,9 @@ class BypassModule(torch.nn.Module):
         return src_orig + (src - src_orig) * bypass_scale
 
 
-class DownsampledZipformer2Encoder(torch.nn.Module):
+class DownsampledZipformerEncoder(torch.nn.Module):
     r"""
-    DownsampledZipformer2Encoder is a zipformer encoder evaluated at a reduced frame rate,
+    DownsampledZipformerEncoder is a zipformer encoder evaluated at a reduced frame rate,
     after convolutional downsampling, and then upsampled again at the output, and combined
     with the origin input, so that the output has the same shape as the input.
     """
@@ -1223,7 +1233,7 @@ class DownsampledZipformer2Encoder(torch.nn.Module):
         dropout: FloatLike,
         causal: bool,
     ):
-        super(DownsampledZipformer2Encoder, self).__init__()
+        super(DownsampledZipformerEncoder, self).__init__()
         self.downsample_factor = downsample
         self.downsample = SimpleDownsample(dim, downsample, dropout, causal)
         self.num_layers = encoder.num_layers
@@ -1342,9 +1352,9 @@ class SimpleDownsample(torch.nn.Module):
         pad = d_seq_len * ds - seq_len
 
         if self.causal and torch.jit.is_tracing():
-            assert pad == 0, (
-                f"pad should be zero for exporting streaming models. Given {pad}"
-            )
+            assert (
+                pad == 0
+            ), f"pad should be zero for exporting streaming models. Given {pad}"
 
         # If we are exporting a streaming model, then we skip the if statement
         if not self.causal or not torch.jit.is_tracing():
@@ -2006,7 +2016,7 @@ class SelfAttention(torch.nn.Module):
 
 
 class FeedforwardModule(torch.nn.Module):
-    """Feedforward module in Zipformer2 model."""
+    """Feedforward module in Zipformer model."""
 
     def __init__(self, embed_dim: int, feedforward_dim: int, dropout: FloatLike):
         super(FeedforwardModule, self).__init__()
@@ -2214,7 +2224,7 @@ class NonlinAttention(torch.nn.Module):
 
 
 class ConvolutionModule(torch.nn.Module):
-    """ConvolutionModule in Zipformer2 model.
+    """ConvolutionModule in Zipformer model.
     Modified from https://github.com/espnet/espnet/blob/master/espnet/nets/pytorch_backend/zipformer/convolution.py
 
     Args:
@@ -2352,9 +2362,9 @@ class ConvolutionModule(torch.nn.Module):
             and chunk_size >= 0
         ):
             # Not support exporting a model for simulated streaming decoding
-            assert self.causal, (
-                "Must initialize model with causal=True if you use chunk_size"
-            )
+            assert (
+                self.causal
+            ), "Must initialize model with causal=True if you use chunk_size"
             x = self.depthwise_conv(x, chunk_size=chunk_size)
         else:
             x = self.depthwise_conv(x)
