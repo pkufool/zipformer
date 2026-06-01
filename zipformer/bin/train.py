@@ -923,7 +923,7 @@ def compute_loss(
     device = model.device if isinstance(model, DDP) else next(model.parameters()).device
     feature = batch["feature"].to(device)
     feature_lens = batch["feature_lens"].to(device)
-    texts = batch["label"]
+    texts = batch["text"]
     y = sp.encode(texts, out_type=int)
 
     batch_idx_train = params.batch_idx_train
@@ -1271,7 +1271,7 @@ def filter_func(sample: Dict[str, Any], sp: Ssentencepiece, sample_rate: int) ->
     T = sample["audio"].size(1) / sample_rate  # in seconds
     T = int(T * 100)  # in 10 ms units
     T = ((T - 7) // 2 + 1) // 2
-    text = sample["label"]
+    text = sample["text"]
     tokens = sp.encode(text)
     S = len(tokens)
     if S == 0 or T - S <= 5 or T / S > 25:
@@ -1280,10 +1280,10 @@ def filter_func(sample: Dict[str, Any], sp: Ssentencepiece, sample_rate: int) ->
 
 
 def map_func(sample):
-    text = sample["label"]
+    text = sample["text"]
     text = re.sub(r"[,.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
-    sample["label"] = text
+    sample["text"] = text
     return sample
 
 
