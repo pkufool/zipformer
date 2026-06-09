@@ -1,22 +1,45 @@
 #!/usr/bin/env python3
+# Copyright 2021-2026 Xiaomi Corporation (Author: Wei Kang,
+#                                                 Zengwei Yao,
+#                                                 Fangjun Kuang,
+#                                                 Zengrui Jin)
 #
-# Combined CTC and RNN-T decoding script
-# Supports a minimal set of decoding methods:
-#   - rnnt-greedy-search
-#   - rnnt-modified-beam-search
-#   - ctc-greedy-search
-#   - ctc-prefix-beam-search
+# See ../../LICENSE for clarification regarding multiple authors
 #
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Combined CTC and RNN-T decoding script
+Supports a minimal set of decoding methods:
+    - rnnt-greedy-search
+    - rnnt-modified-beam-search
+    - ctc-greedy-search
+    - ctc-prefix-beam-search
+"""
 
 import argparse
 import logging
-import math
-import re
+
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import torch
+
+from ssentencepiece import Ssentencepiece
+from tqdm import tqdm
+from atdataset import ATDataloader, Fbank
+
 from zipformer.bin.train import add_model_arguments, get_model, get_params
 from zipformer.decode.search import (
     greedy_search,
@@ -33,38 +56,14 @@ from zipformer.utils.checkpoint import (
 )
 from zipformer.utils.utils import (
     AttributeDict,
+    LOG_EPS,
     setup_logger,
     store_transcripts,
     str2bool,
     write_error_stats,
+    remove_punctuation,
     tokenize_by_cjk_char,
 )
-
-from ssentencepiece import Ssentencepiece
-from tqdm import tqdm
-from atdataset import ATDataloader, FbankExtractor
-
-LOG_EPS = math.log(1e-10)
-
-
-def download_hf_model(repo_id: str) -> Path:
-    """Download a HuggingFace model repo using huggingface_hub.
-
-    Returns the local cache directory path where the repo is downloaded.
-    """
-    from huggingface_hub import snapshot_download
-
-    local_dir = snapshot_download(repo_id=repo_id)
-    logging.info(f"Downloaded HuggingFace model '{repo_id}' to {local_dir}")
-    return Path(local_dir)
-
-
-ALLOWED_METHODS = {
-    "rnnt-greedy-search",
-    "rnnt-modified-beam-search",
-    "ctc-greedy-search",
-    "ctc-prefix-beam-search",
-}
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -72,27 +71,71 @@ def get_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    parser.add_argument("--epoch", type=int, default=30)
-    parser.add_argument("--iter", type=int, default=0)
-    parser.add_argument("--avg", type=int, default=15)
-    parser.add_argument("--use-averaged-model", type=str2bool, default=True)
-
-    parser.add_argument("--exp-dir", type=str, default="zipformer/exp")
-    parser.add_argument("--bpe-model", type=str, default="data/lang_bpe_500/bpe.model")
     parser.add_argument(
-        "--hf-model",
+        "--epoch",
+        type=int,
+        default=30,
+        help="""It specifies the checkpoint to use for decoding.
+        Note: Epoch counts from 1.
+        You can specify --avg to use more checkpoints for model averaging.""",
+    )
+
+    parser.add_argument(
+        "--iter",
+        type=int,
+        default=0,
+        help="""If positive, --epoch is ignored and it
+        will use the checkpoint exp_dir/checkpoint-iter.pt.
+        You can specify --avg to use more checkpoints for model averaging.
+        """,
+    )
+
+    parser.add_argument(
+        "--avg",
+        type=int,
+        default=15,
+        help="Number of checkpoints to average. Automatically select "
+        "consecutive checkpoints before the checkpoint specified by "
+        "'--epoch' and '--iter'",
+    )
+
+    parser.add_argument(
+        "--use-averaged-model",
+        type=str2bool,
+        default=True,
+        help="Whether to load averaged model. Currently it only supports "
+        "using --epoch. If True, it would decode with the averaged model "
+        "over the epoch range from `epoch-avg` (excluded) to `epoch`."
+        "Actually only the models with epoch number of `epoch-avg` and "
+        "`epoch` are loaded for averaging. ",
+    )
+
+    parser.add_argument(
+        "--exp-dir",
         type=str,
-        default="",
-        help="HuggingFace repo ID, e.g., 'ks-fsa/zipformer-medium-v1'. "
-        "If specified, the model will be downloaded from HuggingFace "
-        "and --exp-dir will be overridden.",
+        default="zipformer/exp",
+        help="The experiment dir",
+    )
+
+    parser.add_argument(
+        "--bpe-model",
+        type=str,
+        default="data/lang_bpe_500/bpe.model",
+        help="Path to the BPE model",
     )
 
     parser.add_argument(
         "--decoding-method",
         type=str,
         default="rnnt-greedy-search",
-        choices=sorted(ALLOWED_METHODS),
+        choices=sorted(
+            [
+                "rnnt-greedy-search",
+                "rnnt-modified-beam-search",
+                "ctc-greedy-search",
+                "ctc-prefix-beam-search",
+            ]
+        ),
         help="Choose between rnnt or ctc decoding variants",
     )
 
@@ -109,26 +152,35 @@ def get_parser() -> argparse.ArgumentParser:
         default=1,
         help="Maximum symbols per frame for rnnt greedy search",
     )
+
     parser.add_argument(
         "--max-duration",
         type=float,
         default=600.0,
         help="Maximum duration (s) for each cut",
     )
-    parser.add_argument(
-        "--test-xiaoai", type=str2bool, default=False, help="Use XiaoAI test set list"
-    )
-    parser.add_argument(
-        "--search-avg",
-        type=str2bool,
-        default=True,
-        help="Whether to search averaged model.",
-    )
 
     parser.add_argument(
         "--test-sets",
-        nargs="*",
-        help="A list of test sets, e.g., dev,data/tars/librispeech_dev.lst",
+        nargs="+",
+        help="""
+        A list of test sets, each item contains the test set name and manifest path,e.g., 
+        dev,data/tars/librispeech_dev.lst, test_other,data/tars/librispeech_test-other.lst
+        """,
+    )
+
+    parser.add_argument(
+        "--ignore-punctuation",
+        type=str2bool,
+        default=True,
+        help="Whether to remove punctuation when calculating WER",
+    )
+
+    parser.add_argument(
+        "--gigaspeech-post-processing",
+        type=str2bool,
+        default=False,
+        help="Whether to apply GigaSpeech-specific post-processing to the reference and hypothesis texts before WER calculation.",
     )
 
     add_model_arguments(parser)
@@ -219,6 +271,22 @@ def decode_batch_rnnt(
     sp: Ssentencepiece,
     batch: dict,
 ) -> Dict[str, List[List[str]]]:
+    """
+    Perform decoding for a batch of data using RNN-T decoding methods.
+    Depending on the specified decoding method in params, it can perform either
+    greedy search or modified beam search. The function returns a dictionary where
+    the keys are the decoding method names and the values are lists of hypotheses,
+    with each hypothesis being a list of decoded words.
+
+    Args:
+        params: An AttributeDict containing decoding parameters, including the decoding method and beam size.
+        model: The RNN-T model to be used for decoding.
+        sp: The sentencepiece model for decoding token IDs to words.
+        batch: A dictionary containing the input features and their lengths for the batch.
+
+    Returns:
+        A dictionary mapping decoding method names to lists of decoded hypotheses. Each hypothesis is a list of decoded words.
+    """
     device = next(model.parameters()).device
     feature = batch["feature"].to(device)
     feature_lens = batch["feature_lens"].to(device)
@@ -256,6 +324,22 @@ def decode_batch_ctc(
     sp: Ssentencepiece,
     batch: dict,
 ) -> Dict[str, List[List[str]]]:
+    """
+    Perform decoding for a batch of data using CTC decoding methods.
+    Depending on the specified decoding method in params, it can perform either
+    greedy search or prefix beam search. The function returns a dictionary where
+    the keys are the decoding method names and the values are lists of hypotheses,
+    with each hypothesis being a list of decoded words.
+
+    Args:
+        params: An AttributeDict containing decoding parameters, including the decoding method and beam size.
+        model: The CTC model to be used for decoding.
+        sp: The sentencepiece model for decoding token IDs to words.
+        batch: A dictionary containing the input features and their lengths for the batch.
+
+    Returns:
+        A dictionary mapping decoding method names to lists of decoded hypotheses. Each hypothesis is a list of decoded words.
+    """
     device = params.device
     feature = batch["feature"].to(device)
     feature_lens = batch["feature_lens"].to(device)
@@ -297,49 +381,52 @@ def decode_dataset(
     sp: Ssentencepiece,
     decode_fn,
 ) -> Dict[str, List[Tuple[str, List[str], List[str]]]]:
-    num_cuts = 0
-    try:
-        num_batches = len(dl)
-    except TypeError:
-        num_batches = "?"
+    """
+    Decode an entire dataset using the provided dataloader and decoding function.
+    This function iterates through the batches of data provided by the dataloader,
+    applies the decoding function to each batch, and collects the results in a dictionary.
+    The results dictionary maps decoding method names to lists of tuples, where each tuple contains the cut ID, reference words, and hypothesis words.
 
+    Args:
+        dl: A DataLoader providing batches of data to decode.
+        params: An AttributeDict containing decoding parameters.
+        model: The model to be used for decoding.
+        sp: The sentencepiece model for decoding token IDs to words.
+        decode_fn: The decoding function to apply to each batch.
+
+    Returns:
+        A dictionary mapping decoding method names to lists of tuples, where each tuple contains the cut ID, reference words, and hypothesis words.
+    """
     results = defaultdict(list)
-    log_interval = 20
 
     for batch_idx, batch in enumerate(tqdm(dl, total=len(dl))):
         texts = batch["text"]
-        cut_ids = batch["ids"]
-        if not cut_ids:
-            cut_ids = list(range(len(texts)))
+        utt_ids = batch["ids"]
+        if not utt_ids:
+            utt_ids = list(range(len(texts)))
 
         hyps_dict = decode_fn(params=params, model=model, sp=sp, batch=batch)
 
         for name, hyps in hyps_dict.items():
             this_batch = []
             assert len(hyps) == len(texts)
-            for cut_id, hyp_words, ref_text in zip(cut_ids, hyps, texts):
+            for utt_id, hyp_words, ref_text in zip(utt_ids, hyps, texts):
                 ref_words = ref_text.strip()
                 hyp_words = " ".join(hyp_words).strip()
 
-                ref_words = gigaspeech_post_processing(ref_words)
-                hyp_words = gigaspeech_post_processing(hyp_words)
+                if params.gigaspeech_post_processing:
+                    ref_words = gigaspeech_post_processing(ref_words)
+                    hyp_words = gigaspeech_post_processing(hyp_words)
 
-                ref_words = re.sub(
-                    r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", ref_words
-                )
-                hyp_words = re.sub(
-                    r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", hyp_words
-                )
+                if params.ignore_punctuation:
+                    ref_words = remove_punctuation(ref_words)
+                    hyp_words = remove_punctuation(hyp_words)
+
                 ref_words = tokenize_by_cjk_char(ref_words.lower())
                 hyp_words = tokenize_by_cjk_char(hyp_words.lower())
 
-                this_batch.append((cut_id, ref_words, hyp_words))
+                this_batch.append((utt_id, ref_words, hyp_words))
             results[name].extend(this_batch)
-
-        num_cuts += len(texts)
-        if batch_idx % log_interval == 0:
-            batch_str = f"{batch_idx}/{num_batches}"
-            logging.info(f"batch {batch_str}, cuts processed until now is {num_cuts}")
 
     return results
 
@@ -349,6 +436,11 @@ def save_asr_output(
     test_set_name: str,
     results_dict: Dict[str, List[Tuple[str, List[str], List[str]]]],
 ):
+    """
+    Save the ASR output for each decoding method to files.
+    For each decoding method, it writes the recognized transcripts to a file named `recogs-{test_set_name}-{params.suffix}.txt`
+    and logs the location of the saved transcripts.
+    """
     for key, results in results_dict.items():
         recogs_filename = params.res_dir / f"recogs-{test_set_name}-{params.suffix}.txt"
         results = sorted(results)
@@ -361,6 +453,12 @@ def save_wer_results(
     test_set_name: str,
     results_dict: Dict[str, List[Tuple[str, List[str], List[str]]]],
 ):
+    """
+    Calculate WER for each decoding method and save the results to files.
+    For each decoding method, it writes detailed error statistics to a file named `errs-{test_set_name}-{params.suffix}.txt`
+    and logs the WER. It also creates a summary file named `wer-summary-{test_set_name}-{params.suffix}.txt` that lists
+    the WER for each decoding method in a tab-separated format. Finally, it logs a summary of the WER results for the test set.
+    """
     test_set_wers = dict()
     for key, results in results_dict.items():
         errs_filename = params.res_dir / f"errs-{test_set_name}-{params.suffix}.txt"
@@ -386,30 +484,15 @@ def save_wer_results(
     logging.info(summary)
 
 
-def filter_func(sample):
-    if sample["audio"].size(1) < 16000 * 0.2:
-        return False
-    return True
-
-
 @torch.no_grad()
 def main():
     parser = get_parser()
     args = parser.parse_args()
 
-    if args.hf_model:
-        args.exp_dir = download_hf_model(args.hf_model)
-        # Auto-resolve bpe_model from the downloaded repo
-        default_bpe = args.exp_dir / "data" / "lang_bpe_500" / "bpe.model"
-        if default_bpe.exists():
-            args.bpe_model = str(default_bpe)
-    else:
-        args.exp_dir = Path(args.exp_dir)
+    args.exp_dir = Path(args.exp_dir)
 
     params = get_params()
     params.update(vars(args))
-
-    assert params.decoding_method in ALLOWED_METHODS
 
     params.res_dir = params.exp_dir / params.decoding_method
     if params.iter > 0:
@@ -435,20 +518,18 @@ def main():
         params.suffix += "_use-averaged-model"
 
     setup_logger(f"{params.res_dir}/log-decode-{params.suffix}")
-    logging.info("Decoding started")
 
     device = (
         torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
     )
     params.device = device
-    logging.info(f"Device: {device}")
 
     sp = Ssentencepiece(params.bpe_model)
     params.blank_id = sp.piece_to_id("<blk>")
     params.sos_id = params.eos_id = sp.piece_to_id("<sos>")
     params.vocab_size = sp.vocab_size()
 
-    logging.info(params)
+    logging.info(f"Decoding started: {params}")
 
     logging.info("About to create model")
     model = get_model(params)
@@ -456,43 +537,23 @@ def main():
     model.to(device)
     model.eval()
 
-    feature_extractor = FbankExtractor(
-        sample_rate=params.sample_rate, n_mels=params.feature_dim
+    assert params.test_sets is not None and len(params.test_sets) > 0, (
+        "Please specify test sets for decoding."
     )
-
-    if params.test_sets is not None and len(params.test_sets) > 0:
-        test_sets = dict()
-        for item in params.test_sets:
-            key, path = item.split(",")
-            test_sets[key] = path
-    elif params.test_xiaoai:
-        test_sets = {
-            "xiaoai_test": "data/tars/xiaoai_cellphone_llm_0906.lst",
-        }
-    else:
-        if params.search_avg:
-            test_sets = {
-                "aishell_test": "data/tars/aishell_test.lst",
-                "test_other": "data/tars/librispeech_test-other.lst",
-            }
-        else:
-            test_sets = {
-                "aishell_test": "data/tars/aishell_test.lst",
-                "aishell2_test": "data/tars/aishell2_test.lst",
-                "TEST_NET": "data/tars/wenetspeech_test_net.lst",
-                "TEST_MEETING": "data/tars/wenetspeech_test_meeting.lst",
-                "test_clean": "data/tars/librispeech_test-clean.lst",
-                "test_other": "data/tars/librispeech_test-other.lst",
-                "gigaspeech_TEST": "data/tars/gigaspeech_TEST.lst",
-                "cv22_en_test": "data/tars/cv22-en_test.lst",
-                "cv22_zh_CN_test": "data/tars/cv22-zh-CN_test.lst",
-                "kespeech": "data/tars/kespeech_test.lst",
-            }
 
     decode_fn = (
         decode_batch_ctc
         if params.decoding_method.startswith("ctc-")
         else decode_batch_rnnt
+    )
+
+    test_sets = dict()
+    for item in params.test_sets:
+        key, path = item.split(",")
+        test_sets[key] = path
+
+    feature_extractor = Fbank(
+        sample_rate=params.sample_rate, n_mels=params.feature_dim
     )
 
     for test_set, manifest in test_sets.items():
@@ -503,7 +564,6 @@ def main():
             sample_rate=params.sample_rate,
             is_test=True,
             num_workers=0,
-            filter_func=filter_func,
         )
 
         results_dict = decode_dataset(
@@ -520,7 +580,6 @@ def main():
         save_wer_results(
             params=params, test_set_name=test_set, results_dict=results_dict
         )
-
     logging.info("Done!")
 
 

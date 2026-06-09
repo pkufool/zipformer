@@ -161,7 +161,7 @@ def _greedy_search_batch(
 
 
 def greedy_search(
-    model: torch.nn.Module,
+    model: Union[torch.nn.Module, torch.jit.ScriptModule],
     encoder_out: torch.Tensor,
     encoder_out_lens: torch.Tensor,
     max_sym_per_frame: int = 1,
@@ -171,7 +171,7 @@ def greedy_search(
     """Greedy search for a single utterance.
     Args:
       model:
-        An instance of `Transducer`.
+        An instance of `Transducer` or a `torch.jit.ScriptModule`.
       encoder_out:
         A tensor of shape (N, T, C) from the encoder. Support only N==1 for now.
       encoder_out_lens:
@@ -273,6 +273,82 @@ def greedy_search(
             hyps=[hyp],
             timestamps=[timestamps],
         )
+
+
+def streaming_greedy_search(
+    model: torch.nn.Module,
+    encoder_out: torch.Tensor,
+    streams: List[DecodeStream],
+    max_sym_per_frame: int = 1,
+    blank_penalty: float = 0.0,
+    return_timestamps: bool = False,
+) -> None:
+    """Greedy search in batch mode. It hardcodes --max-sym-per-frame=1.
+
+    Args:
+      model:
+        The transducer model.
+      encoder_out:
+        Output from the encoder. Its shape is (N, T, C), where N >= 1.
+      streams:
+        A list of Stream objects.
+    """
+    assert len(streams) == encoder_out.size(0)
+    assert encoder_out.ndim == 3
+
+    blank_id = model.decoder.blank_id
+    context_size = model.decoder.context_size
+    device = model.device
+    T = encoder_out.size(1)
+
+    for stream in streams:
+        if stream.decoder_out is not None:
+            continue
+        else:
+            if len(stream.hyp) == 0:
+                stream.hyp = [-1] * (context_size - 1) + [blank_id]
+            decoder_input = torch.tensor(
+                [stream.hyp[-context_size:]], device=device, dtype=torch.int64
+            ).reshape(1, context_size)
+            decoder_out = model.decoder(decoder_input, need_pad=False)
+            decoder_out = model.joiner.decoder_proj(decoder_out)
+            stream.decoder_out = decoder_out
+
+    for t in range(T):
+        # current_encoder_out's shape: (batch_size, 1, encoder_out_dim)
+        current_encoder_out = encoder_out[:, t : t + 1, :]  # noqa
+
+        # decoder_out is of shape (N, 1, decoder_out_dim)
+        decoder_out = torch.cat([stream.decoder_out for stream in streams], dim=0)
+
+        logits = model.joiner(
+            current_encoder_out.unsqueeze(2),
+            decoder_out.unsqueeze(1),
+            project_input=False,
+        )
+        # logits'shape (batch_size,  vocab_size)
+        logits = logits.squeeze(1).squeeze(1)
+
+        if blank_penalty != 0.0:
+            logits[:, 0] -= blank_penalty
+
+        assert logits.ndim == 2, logits.shape
+        y = logits.argmax(dim=1).tolist()
+        for i, v in enumerate(y):
+            if v != blank_id:
+                streams[i].hyp.append(v)
+                # update decoder output
+                decoder_input = torch.tensor(
+                    [streams[i].hyp[-context_size:]],
+                    device=device,
+                    dtype=torch.int64,
+                )
+                decoder_out = model.decoder(
+                    decoder_input,
+                    need_pad=False,
+                )
+                decoder_out = model.joiner.decoder_proj(decoder_out)
+                streams[i].decoder_out = decoder_out
 
 
 class HypsShape:
@@ -863,75 +939,6 @@ def beam_search(
         return ys
     else:
         return AsrResults(hyps=[ys], timestamps=[best_hyp.timestamps])
-
-
-def streaming_greedy_search(
-    model: torch.nn.Module,
-    encoder_out: torch.Tensor,
-    streams: List[DecodeStream],
-    blank_penalty: float = 0.0,
-) -> None:
-    """Greedy search in batch mode. It hardcodes --max-sym-per-frame=1.
-
-    Args:
-      model:
-        The transducer model.
-      encoder_out:
-        Output from the encoder. Its shape is (N, T, C), where N >= 1.
-      streams:
-        A list of Stream objects.
-    """
-    assert len(streams) == encoder_out.size(0)
-    assert encoder_out.ndim == 3
-
-    blank_id = model.decoder.blank_id
-    context_size = model.decoder.context_size
-    device = model.device
-    T = encoder_out.size(1)
-
-    decoder_input = torch.tensor(
-        [stream.hyp[-context_size:] for stream in streams],
-        device=device,
-        dtype=torch.int64,
-    )
-    # decoder_out is of shape (N, 1, decoder_out_dim)
-    decoder_out = model.decoder(decoder_input, need_pad=False)
-    decoder_out = model.joiner.decoder_proj(decoder_out)
-
-    for t in range(T):
-        # current_encoder_out's shape: (batch_size, 1, encoder_out_dim)
-        current_encoder_out = encoder_out[:, t : t + 1, :]  # noqa
-
-        logits = model.joiner(
-            current_encoder_out.unsqueeze(2),
-            decoder_out.unsqueeze(1),
-            project_input=False,
-        )
-        # logits'shape (batch_size,  vocab_size)
-        logits = logits.squeeze(1).squeeze(1)
-
-        if blank_penalty != 0.0:
-            logits[:, 0] -= blank_penalty
-
-        assert logits.ndim == 2, logits.shape
-        y = logits.argmax(dim=1).tolist()
-        emitted = False
-        for i, v in enumerate(y):
-            if v != blank_id:
-                streams[i].hyp.append(v)
-                emitted = True
-        if emitted:
-            # update decoder output
-            decoder_input = torch.tensor(
-                [stream.hyp[-context_size:] for stream in streams],
-                device=device,
-                dtype=torch.int64,
-            )
-            decoder_out = model.decoder(
-                decoder_input,
-                need_pad=False,
-            )
-            decoder_out = model.joiner.decoder_proj(decoder_out)
 
 
 def streaming_modified_beam_search(

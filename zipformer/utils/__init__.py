@@ -1,5 +1,3 @@
-from . import checkpoint, diagnostics, hooks
-
 from .checkpoint import (
     average_checkpoints,
     average_checkpoints_with_averaged_model,
@@ -11,15 +9,12 @@ from .checkpoint import (
     update_averaged_model,
 )
 
-from .diagnostics import TensorDiagnosticOptions, attach_diagnostics
 from .utils import (
     cleanup_dist,
     setup_dist,
     get_env_info,
     raise_grad_scale_is_too_small_error,
 )
-from .hooks import register_inf_check_hooks
-
 
 from .utils import (
     AttributeDict,
@@ -28,10 +23,12 @@ from .utils import (
     add_sos,
     get_parameter_groups_with_lrs,
     make_pad_mask,
+    remove_punctuation,
     setup_logger,
     store_transcripts,
     str2bool,
     time_warp,
     torch_autocast,
     write_error_stats,
+    SymbolTable
 )

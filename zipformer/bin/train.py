@@ -50,8 +50,8 @@ from zipformer.utils.checkpoint import (
 )
 from zipformer.utils.checkpoint import save_checkpoint as save_checkpoint_impl
 
-from zipformer.utils.hooks import register_inf_check_hooks
-from zipformer.utils import diagnostics
+# from zipformer.utils.hooks import register_inf_check_hooks
+# from zipformer.utils import diagnostics
 from zipformer.utils.utils import (
     cleanup_dist,
     setup_dist,
@@ -63,7 +63,7 @@ from zipformer.utils.utils import (
     setup_logger,
     str2bool,
 )
-from atdataset import ATDataloader, FbankExtractor
+from atdataset import ATDataloader, Fbank
 
 
 LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler]
@@ -1422,7 +1422,7 @@ def run(local_rank, world_size, args):
         assert validation_sets is not None
         assert len(validation_weights) == len(validation_sets)
 
-    feature_extractor = FbankExtractor(
+    feature_extractor = Fbank(
         sample_rate=params.sample_rate,
         n_mels=params.feature_dim,
     )
@@ -1564,8 +1564,7 @@ def main():
         run(local_rank=0, world_size=1, args=args)
 
 
-torch.set_num_threads(1)
-torch.set_num_interop_threads(1)
-
 if __name__ == "__main__":
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
     main()

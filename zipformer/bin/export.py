@@ -120,7 +120,12 @@ from typing import Dict, List, Tuple
 
 import torch
 
+import onnx
+
+from onnxconverter_common import float16
+
 from ssentencepiece import Ssentencepiece
+from onnxruntime.quantization import QuantType, quantize_dynamic
 
 from zipformer.modules.scaling_converter import convert_scaled_to_non_scaled
 from zipformer.bin.train import add_model_arguments, get_model, get_params
@@ -131,7 +136,7 @@ from zipformer.utils.checkpoint import (
     find_checkpoints,
     load_checkpoint,
 )
-from zipformer.utils.utils import make_pad_mask, str2bool
+from zipformer.utils.utils import make_pad_mask, str2bool, SymbolTable, num_tokens
 
 
 def get_parser():
@@ -217,6 +222,13 @@ def get_parser():
     )
 
     parser.add_argument(
+        "--tokens",
+        type=str,
+        default="data/lang_bpe_500/tokens.txt",
+        help="Path to the tokens file",
+    )
+
+    parser.add_argument(
         "--jit",
         type=str2bool,
         default=False,
@@ -252,6 +264,13 @@ def get_parser():
         type=str2bool,
         default=False,
         help="Set it to true for model file size > 2GB (streaming ONNX export only).",
+    )
+
+    parser.add_argument(
+        "--use-whisper-features",
+        type=str2bool,
+        default=False,
+        help="Whether to use whisper features (streaming ONNX export only).",
     )
 
     add_model_arguments(parser)
@@ -398,7 +417,6 @@ def add_meta_data(
     filename: str, meta_data: Dict[str, str], use_external_data: bool = False
 ):
     """Add meta data to an ONNX model. It is changed in-place."""
-    import onnx
 
     filename = str(filename)
     model = onnx.load(filename)
@@ -421,9 +439,6 @@ def add_meta_data(
 
 
 def export_onnx_fp16(onnx_fp32_path, onnx_fp16_path):
-    import onnx
-    from onnxconverter_common import float16
-
     onnx_fp32_model = onnx.load_model(onnx_fp32_path)
     onnx_fp16_model = float16.convert_float_to_float16(
         onnx_fp32_model, keep_io_types=True
@@ -432,9 +447,6 @@ def export_onnx_fp16(onnx_fp32_path, onnx_fp16_path):
 
 
 def export_onnx_fp16_large_2gb(onnx_fp32_path, onnx_fp16_path):
-    import onnx
-    from onnxconverter_common import float16
-
     onnx_fp16_model = float16.convert_float_to_float16_model_path(
         onnx_fp32_path, keep_io_types=True
     )
@@ -592,7 +604,6 @@ def _export_joiner_model_onnx(
 
 def export_onnx_transducer(params, model):
     """Export non-streaming transducer model to ONNX."""
-    from onnxruntime.quantization import QuantType, quantize_dynamic
 
     encoder = OnnxEncoder(
         encoder=model.encoder,
@@ -657,7 +668,6 @@ def export_onnx_transducer(params, model):
     )
 
     # We don't quantize the decoder since it may cause large accuracy drop.
-
     joiner_filename_int8 = params.exp_dir / f"joiner-{suffix}.int8.onnx"
     quantize_dynamic(
         model_input=joiner_filename,
@@ -727,7 +737,6 @@ def _export_ctc_model_onnx(model, filename, opset_version=11):
 
 def export_onnx_ctc(params, model):
     """Export non-streaming CTC model to ONNX."""
-    from onnxruntime.quantization import QuantType, quantize_dynamic
 
     ctc_model = OnnxCtcModel(
         encoder=model.encoder,
@@ -848,19 +857,17 @@ def get_streaming_meta_data(encoder_model, comment):
 
 
 def export_streaming_encoder_onnx(
-    encoder_model,
-    encoder_filename,
-    opset_version,
-    feature_dim,
-    dynamic_batch,
-    use_external_data,
-    output_name,
-    meta_data,
+    encoder_model: torch.nn.Module,
+    encoder_filename: str,
+    feature_dim: int,
+    dynamic_batch: bool,
+    use_external_data: bool,
+    output_name: str,
+    meta_data: dict,
+    opset_version: int = 11,
 ):
     """Shared logic for exporting streaming encoder (transducer or CTC) to ONNX."""
-    encoder_model.encoder.__class__.forward = (
-        encoder_model.encoder.__class__.streaming_forward
-    )
+    encoder_model.encoder.__class__.forward = encoder_model.encoder.__class__.streaming_forward
 
     T = encoder_model.chunk_size * 2 + encoder_model.pad_length
     x = torch.rand(1, T, feature_dim, dtype=torch.float32)
@@ -1005,7 +1012,6 @@ class OnnxStreamingEncoder(torch.nn.Module):
 
 def export_onnx_streaming_transducer(params, model):
     """Export streaming transducer model to ONNX."""
-    from onnxruntime.quantization import QuantType, quantize_dynamic
 
     encoder = OnnxStreamingEncoder(
         encoder=model.encoder,
@@ -1041,7 +1047,6 @@ def export_onnx_streaming_transducer(params, model):
     meta_data = get_streaming_meta_data(
         encoder,
         "streaming zipformer2",
-        use_whisper_features=params.use_whisper_features,
     )
     logging.info(f"meta_data: {meta_data}")
 
@@ -1050,6 +1055,7 @@ def export_onnx_streaming_transducer(params, model):
         encoder_filename = f"encoder-{suffix}.onnx"
     else:
         encoder_filename = params.exp_dir / f"encoder-{suffix}.onnx"
+
     export_streaming_encoder_onnx(
         encoder,
         str(encoder_filename),
@@ -1124,11 +1130,24 @@ def export_onnx_streaming_transducer(params, model):
 # ONNX Streaming CTC
 # ==============================================================================
 
-
 class OnnxStreamingCtcModel(torch.nn.Module):
     """A wrapper for Zipformer and the ctc_head (streaming)."""
 
-    def __init__(self, encoder, encoder_embed, ctc_output):
+    def __init__(
+        self,
+        encoder: torch.nn.Module,
+        encoder_embed: torch.nn.Module,
+        ctc_output: torch.nn.Module,
+    ):
+        """
+        Args:
+          encoder:
+            A Zipformer encoder.
+          encoder_proj:
+            The projection layer for encoder from the joiner.
+          ctc_output:
+            The ctc head.
+        """
         super().__init__()
         self.encoder = encoder
         self.encoder_embed = encoder_embed
@@ -1138,8 +1157,10 @@ class OnnxStreamingCtcModel(torch.nn.Module):
         self.pad_length = 7 + 2 * 3
 
     def forward(
-        self, x: torch.Tensor, states: List[torch.Tensor]
-    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        self,
+        x: torch.Tensor,
+        states: List[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
         N = x.size(0)
         T = self.chunk_size * 2 + self.pad_length
         x_lens = torch.tensor([T] * N, device=x.device)
@@ -1155,12 +1176,16 @@ class OnnxStreamingCtcModel(torch.nn.Module):
 
         src_key_padding_mask = torch.zeros(N, self.chunk_size, dtype=torch.bool)
 
+        # processed_mask is used to mask out initial states
         processed_mask = torch.arange(left_context_len, device=x.device).expand(
             x.size(0), left_context_len
         )
-        processed_lens = states[-1]
+        processed_lens = states[-1]  # (batch,)
+        # (batch, left_context_size)
         processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
+        # Update processed lengths
         new_processed_lens = processed_lens + x_lens
+        # (batch, left_context_size + chunk_size)
         src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
 
         x = x.permute(1, 0, 2)
@@ -1178,11 +1203,13 @@ class OnnxStreamingCtcModel(torch.nn.Module):
         )
         encoder_out = encoder_out.permute(1, 0, 2)
         encoder_out = self.ctc_output(encoder_out)
+        # Now encoder_out is of shape (N, T, ctc_output_dim)
 
         new_states = new_encoder_states + [
             new_cached_embed_left_pad,
             new_processed_lens,
         ]
+
         return encoder_out, new_states
 
     def get_init_states(
@@ -1190,18 +1217,29 @@ class OnnxStreamingCtcModel(torch.nn.Module):
         batch_size: int = 1,
         device: torch.device = torch.device("cpu"),
     ) -> List[torch.Tensor]:
+        """
+        Returns a list of cached tensors of all encoder layers. For layer-i, states[i*6:(i+1)*6]
+        is (cached_key, cached_nonlin_attn, cached_val1, cached_val2, cached_conv1, cached_conv2).
+        states[-2] is the cached left padding for ConvNeXt module,
+        of shape (batch_size, num_channels, left_pad, num_freqs)
+        states[-1] is processed_lens of shape (batch,), which records the number
+        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+        """
         states = self.encoder.get_init_states(batch_size, device)
+
         embed_states = self.encoder_embed.get_init_states(batch_size, device)
+
         states.append(embed_states)
+
         processed_lens = torch.zeros(batch_size, dtype=torch.int64, device=device)
         states.append(processed_lens)
+
         return states
 
 
 def export_onnx_streaming_ctc(params, model):
     """Export streaming CTC model to ONNX."""
-    from onnxruntime.quantization import QuantType, quantize_dynamic
-
+    
     ctc_model = OnnxStreamingCtcModel(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
@@ -1225,7 +1263,6 @@ def export_onnx_streaming_ctc(params, model):
     meta_data = get_streaming_meta_data(
         ctc_model,
         "streaming ctc zipformer2",
-        use_whisper_features=params.use_whisper_features,
     )
     logging.info(f"meta_data: {meta_data}")
 
@@ -1372,10 +1409,28 @@ def main():
     params = get_params()
     params.update(vars(args))
 
-    sp = Ssentencepiece(params.bpe_model)
-    params.blank_id = sp.piece_to_id("<blk>")
-    params.vocab_size = sp.get_piece_size()
-    params.sos_id = params.eos_id = sp.piece_to_id("<sos/eos>")
+    if params.bpe_model is not None and not Path(params.bpe_model).is_file():
+        sp = Ssentencepiece(params.bpe_model)
+        params.blank_id = sp.piece_to_id("<blk>")
+        if sp.piece_to_id("<sos/eos>") != sp.piece_to_id("<unk>"):
+            params.sos_id = params.eos_id = sp.piece_to_id("<sos/eos>")
+        else:
+            params.sos_id = sp.piece_to_id("<sos>")
+            params.eos_id = sp.piece_to_id("<eos>")
+        params.vocab_size = sp.get_piece_size()
+    elif params.tokens is not None and Path(params.tokens).is_file():
+        token_table = SymbolTable.from_file(params.tokens)
+        params.blank_id = token_table["<blk>"]
+        if "<sos/eos>" in token_table:
+            params.sos_id = params.eos_id = token_table["<sos/eos>"]
+        else:
+            params.sos_id = token_table["<sos>"]
+            params.eos_id = token_table["<eos>"]
+        params.vocab_size = num_tokens(token_table)
+    else:
+        raise ValueError(
+            "Either --bpe-model or --tokens must be provided and point to a valid file."
+        )
 
     logging.info(params)
 
@@ -1384,10 +1439,7 @@ def main():
     model = get_model(params)
 
     # Load checkpoint
-    # Use strict=False for CTC-only export since model may have transducer components
-    strict = not params.ctc
-    load_model_checkpoint(params, model, strict=strict)
-
+    load_model_checkpoint(params, model, strict=False, device=torch.device("cpu"))
     # Move to CPU and eval
     model.to("cpu")
     model.eval()
@@ -1396,7 +1448,7 @@ def main():
     if params.export_type == "torch":
         export_torch(params, model)
     elif params.export_type == "onnx":
-        convert_scaled_to_non_scaled(model, inplace=True, is_onnx=True)
+        convert_scaled_to_non_scaled(model, inplace=True)
 
         if params.streaming:
             if params.ctc:

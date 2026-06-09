@@ -294,6 +294,9 @@ class DecodeStream(object):
         # The decoding result (partial or final) of current utterance.
         self.hyp: List = []
 
+        # decoder output
+        self.decoder_out: Optional[torch.Tensor] = None
+
         # how many frames have been processed, after subsampling (i.e. a
         # cumulative sum of the second return value of
         # encoder.streaming_forward

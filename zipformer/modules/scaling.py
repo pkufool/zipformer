@@ -44,13 +44,17 @@ custom_bwd = custom_amp_decorator(custom_bwd, deprecated)
 
 
 def torch_compile(fn, *args, **kwargs):
+    # Skip torch.compile during ONNX export to avoid tracing issues
+    import os
+    if os.environ.get("K2_ONNX_EXPORT", "0") == "1":
+        return fn
     if hasattr(torch, "compile"):
         fn = torch.compile(
             fn,
             *args,
             **kwargs,
             dynamic=True,
-            options={"shape_padding": True, "force_shape_pad": True},
+            options={"shape_padding": True},
         )
     return fn
 
@@ -938,7 +942,7 @@ class Balancer(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if (
-            torch.jit.is_scripting()
+            torch.jit.is_scripting() or torch.jit.is_tracing()
             or not x.requires_grad
             or (x.is_cuda and self.mem_cutoff(torch.cuda.memory_allocated()))
         ):
@@ -1175,7 +1179,7 @@ class Whiten(torch.nn.Module):
         and nothing will happen in backprop.
         """
         grad_scale = float(self.grad_scale)
-        if not x.requires_grad or random.random() > self.prob or grad_scale == 0:
+        if torch.jit.is_scripting() or torch.jit.is_tracing() or not x.requires_grad or random.random() > self.prob or grad_scale == 0:
             return _no_op(x)
         else:
             return WhiteningPenaltyFunction.apply(x, self)
@@ -1398,7 +1402,7 @@ class Dropout3(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         p = float(self.p)
-        if not self.training or p == 0:
+        if not self.training or p == 0 or torch.jit.is_scripting() or torch.jit.is_tracing():
             return _no_op(x)
         scale = 1.0 / (1 - p)
         rand_shape = list(x.shape)

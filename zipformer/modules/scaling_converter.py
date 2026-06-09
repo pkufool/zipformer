@@ -27,7 +27,6 @@ import copy
 from typing import List
 
 import torch
-import torch.nn as nn
 from zipformer.modules.scaling import (
     Balancer,
     Dropout3,
@@ -60,7 +59,7 @@ def get_submodule(model, target):
 
 
 def convert_scaled_to_non_scaled(
-    model: nn.Module,
+    model: torch.nn.Module,
     inplace: bool = False,
     is_onnx: bool = False,
 ):
@@ -82,7 +81,7 @@ def convert_scaled_to_non_scaled(
     d = {}
     for name, m in model.named_modules():
         if isinstance(m, (Balancer, Dropout3, ScaleGrad, Whiten)):
-            d[name] = nn.Identity()
+            d[name] = torch.nn.Identity()
         elif is_onnx and isinstance(m, SwooshR):
             d[name] = SwooshROnnx()
         elif is_onnx and isinstance(m, SwooshL):
@@ -99,5 +98,4 @@ def convert_scaled_to_non_scaled(
             setattr(get_submodule(model, parent), child, v)
         else:
             setattr(model, k, v)
-
     return model
