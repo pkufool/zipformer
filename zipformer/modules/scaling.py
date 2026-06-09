@@ -22,7 +22,7 @@ import random
 from typing import Any, Optional, Tuple, Union
 
 import torch
-from zipformer.utils.utils import torch_autocast
+from zipformer.utils import torch_autocast
 
 
 def custom_amp_decorator(dec, cuda_amp_deprecated):

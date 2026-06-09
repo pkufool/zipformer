@@ -107,8 +107,9 @@ import torchaudio
 from torch.nn.utils.rnn import pad_sequence
 import kaldi_native_fbank as knf
 
-from zipformer.utils.utils import str2bool, SymbolTable, num_tokens
-from zipformer.decode.search import greedy_search
+from zipformer.utils import str2bool, SymbolTable, AttributeDict
+from zipformer.decode.search import greedy_search, streaming_greedy_search
+from zipformer.decode.stream import DecodeStream
 
 # ==============================================================================
 # Argument parsing
@@ -364,58 +365,254 @@ def infer_jit(args) -> List[dict]:
     return results
 
 
+def stack_states(state_list: List[List[torch.Tensor]]) -> List[torch.Tensor]:
+    """Stack list of zipformer states that correspond to separate utterances
+    into a single emformer state, so that it can be used as an input for
+    zipformer when those utterances are formed into a batch.
+
+    Args:
+      state_list:
+        Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance. For element-n,
+        state_list[n] is a list of cached tensors of all encoder layers. For layer-i,
+        state_list[n][i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1,
+        cached_val2, cached_conv1, cached_conv2).
+        state_list[n][-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+        state_list[n][-1] is processed_lens of shape (batch,), which records the number
+        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Note:
+      It is the inverse of :func:`unstack_states`.
+    """
+    batch_size = len(state_list)
+    assert (len(state_list[0]) - 2) % 6 == 0, len(state_list[0])
+    tot_num_layers = (len(state_list[0]) - 2) // 6
+
+    batch_states = []
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key = torch.cat(
+            [state_list[i][layer_offset] for i in range(batch_size)], dim=1
+        )
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn = torch.cat(
+            [state_list[i][layer_offset + 1] for i in range(batch_size)], dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1 = torch.cat(
+            [state_list[i][layer_offset + 2] for i in range(batch_size)], dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2 = torch.cat(
+            [state_list[i][layer_offset + 3] for i in range(batch_size)], dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1 = torch.cat(
+            [state_list[i][layer_offset + 4] for i in range(batch_size)], dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2 = torch.cat(
+            [state_list[i][layer_offset + 5] for i in range(batch_size)], dim=0
+        )
+        batch_states += [
+            cached_key,
+            cached_nonlin_attn,
+            cached_val1,
+            cached_val2,
+            cached_conv1,
+            cached_conv2,
+        ]
+
+    cached_embed_left_pad = torch.cat(
+        [state_list[i][-2] for i in range(batch_size)], dim=0
+    )
+    batch_states.append(cached_embed_left_pad)
+
+    processed_lens = torch.cat([state_list[i][-1] for i in range(batch_size)], dim=0)
+    batch_states.append(processed_lens)
+
+    return batch_states
+
+
+def unstack_states(batch_states: List[torch.Tensor]) -> List[List[torch.Tensor]]:
+    """Unstack the zipformer state corresponding to a batch of utterances
+    into a list of states, where the i-th entry is the state from the i-th
+    utterance in the batch.
+
+    Note:
+      It is the inverse of :func:`stack_states`.
+
+    Args:
+        batch_states: A list of cached tensors of all encoder layers. For layer-i,
+          states[i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1, cached_val2,
+          cached_conv1, cached_conv2).
+          state_list[-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+          states[-1] is processed_lens of shape (batch,), which records the number
+          of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Returns:
+        state_list: A list of list. Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance.
+    """
+    assert (len(batch_states) - 2) % 6 == 0, len(batch_states)
+    tot_num_layers = (len(batch_states) - 2) // 6
+
+    processed_lens = batch_states[-1]
+    batch_size = processed_lens.shape[0]
+
+    state_list = [[] for _ in range(batch_size)]
+
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key_list = batch_states[layer_offset].chunk(chunks=batch_size, dim=1)
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn_list = batch_states[layer_offset + 1].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1_list = batch_states[layer_offset + 2].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2_list = batch_states[layer_offset + 3].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1_list = batch_states[layer_offset + 4].chunk(
+            chunks=batch_size, dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2_list = batch_states[layer_offset + 5].chunk(
+            chunks=batch_size, dim=0
+        )
+        for i in range(batch_size):
+            state_list[i] += [
+                cached_key_list[i],
+                cached_nonlin_attn_list[i],
+                cached_val1_list[i],
+                cached_val2_list[i],
+                cached_conv1_list[i],
+                cached_conv2_list[i],
+            ]
+
+    cached_embed_left_pad_list = batch_states[-2].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(cached_embed_left_pad_list[i])
+
+    processed_lens_list = batch_states[-1].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(processed_lens_list[i])
+
+    return state_list
+
+
 def infer_jit_streaming(args) -> List[dict]:
-    """JIT streaming transducer inference.
+    """JIT streaming transducer inference with dynamic batching.
+
+    Uses DecodeStream to store intermediate encoder states and decoder output,
+    and streaming_greedy_search for decoding. All audio features are extracted
+    upfront (non-streaming), then processed chunk-by-chunk with dynamic batching.
     """
     model = torch.jit.load(args.model)
     model.eval()
     model.to(args.device)
+    model.device = args.device
 
     features, feature_lengths = extract_features(args)
 
     token_table = SymbolTable.from_file(args.tokens)
     context_size = model.decoder.context_size
     chunk_length = model.encoder.chunk_size * 2
-    T = chunk_length + 7  # Conv2dSubsampling pad_length is a fixed constant
+    pad_length = model.encoder.pad_length
 
     durations = get_audio_durations(args.sound_files)
 
+    params = AttributeDict(
+        {
+            "blank_id": model.decoder.blank_id,
+            "context_size": context_size,
+            "decoding_method": "greedy_search",
+        }
+    )
+
+    num_streams = len(args.sound_files)
+    all_streams = []
+    decode_streams = []
+    for idx in range(num_streams):
+        initial_states = model.encoder.get_init_states(device=args.device)
+        stream = DecodeStream(
+            params=params,
+            utt_id=args.sound_files[idx],
+            initial_states=initial_states,
+            device=args.device,
+            pad_length=pad_length,
+        )
+        stream.set_features(features[idx, : feature_lengths[idx].item()])
+        all_streams.append(stream)
+        decode_streams.append(stream)
+
+    while len(decode_streams) > 0:
+        batch_features = []
+        batch_feature_lens = []
+        for stream in decode_streams:
+            feat, feat_len = stream.get_feature_frames(chunk_length)
+            batch_features.append(feat)
+            batch_feature_lens.append(feat_len)
+
+        batch_feature_lens = torch.tensor(
+            batch_feature_lens, dtype=torch.int32, device=args.device
+        )
+        batch_features = pad_sequence(
+            batch_features,
+            batch_first=True,
+            padding_value=math.log(1e-10),
+        )
+
+        # Ensure minimum length for encoder subsampling
+        tail_length = chunk_length + pad_length
+        if batch_features.size(1) < tail_length:
+            pad_len = tail_length - batch_features.size(1)
+            batch_feature_lens += pad_len
+            batch_features = torch.nn.functional.pad(
+                batch_features,
+                (0, 0, 0, pad_len),
+                mode="constant",
+                value=math.log(1e-10),
+            )
+
+        stacked_states = stack_states([s.states for s in decode_streams])
+
+        encoder_out, _encoder_out_lens, new_states = model.encoder(
+            features=batch_features,
+            feature_lengths=batch_feature_lens,
+            states=stacked_states,
+        )
+
+        per_stream_states = unstack_states(new_states)
+        for j, stream in enumerate(decode_streams):
+            stream.states = per_stream_states[j]
+
+        encoder_out = model.joiner.encoder_proj(encoder_out)
+
+        streaming_greedy_search(
+            model=model,
+            encoder_out=encoder_out,
+            streams=decode_streams,
+        )
+
+        decode_streams = [s for s in decode_streams if not s.done]
+
     results = []
-
-    for idx, feature in enumerate(features):
-        states = model.encoder.get_init_states(device=args.device)
-        num_frames = feature_lengths[idx].item()
-        num_processed_frames = 0
-        hyp = None
-        decoder_out = None
-
-        while num_processed_frames + T <= num_frames:
-            frames = feature[num_processed_frames : num_processed_frames + T].to(
-                args.device
-            ).unsqueeze(0)
-            x_lens = torch.tensor([T], dtype=torch.int32, device=args.device)
-            encoder_out, out_lens, states = model.encoder(
-                features=frames,
-                feature_lengths=x_lens,
-                states=states,
-            )
-            num_processed_frames += chunk_length
-
-            hyp, decoder_out = greedy_search_transducer_streaming_jit(
-                decoder,
-                joiner,
-                encoder_out.squeeze(0),
-                decoder_out,
-                hyp,
-                device=args.device,
-            )
-
-        if hyp is not None:
-            text = token_ids_to_text(hyp[context_size:], token_table)
-        else:
-            text = ""
+    for idx in range(num_streams):
+        stream = all_streams[idx]
+        hyp = stream.hyp[context_size:]
+        text = token_ids_to_text(hyp, token_table) if hyp else ""
         results.append(
-            {"filename": sound_file, "text": text, "duration": durations[idx]}
+            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
         )
 
     return results

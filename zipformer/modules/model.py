@@ -22,7 +22,7 @@ import k2
 import torch
 from lhotse.dataset import SpecAugment
 from zipformer.modules.scaling import ScaledLinear
-from zipformer.utils.utils import (
+from zipformer.utils import (
     add_sos,
     make_pad_mask,
     time_warp,

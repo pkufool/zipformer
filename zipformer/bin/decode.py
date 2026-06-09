@@ -48,13 +48,11 @@ from zipformer.decode.search import (
     ctc_prefix_beam_search,
 )
 from zipformer.decode.post_processing import gigaspeech_post_processing
-from zipformer.utils.checkpoint import (
+from zipformer.utils import (
     average_checkpoints,
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
-)
-from zipformer.utils.utils import (
     AttributeDict,
     LOG_EPS,
     setup_logger,
@@ -62,7 +60,7 @@ from zipformer.utils.utils import (
     str2bool,
     write_error_stats,
     remove_punctuation,
-    tokenize_by_cjk_char,
+    tokenize_by_cjk_char
 )
 
 

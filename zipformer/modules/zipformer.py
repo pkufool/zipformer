@@ -40,7 +40,7 @@ from zipformer.modules.scaling import (
     penalize_abs_values_gt,
     softmax,
 )
-from zipformer.utils.utils import torch_autocast
+from zipformer.utils import torch_autocast
 
 
 class Zipformer(torch.nn.Module):

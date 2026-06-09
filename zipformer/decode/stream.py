@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from zipformer.decode.context_graph import ContextState
 from zipformer.decode.ngram_lm import NgramLmStateCost
 
-from zipformer.utils.utils import AttributeDict
+from zipformer.utils import AttributeDict
 
 
 @dataclass
@@ -259,6 +259,7 @@ class DecodeStream(object):
         utt_id: str,
         initial_states: List[torch.Tensor],
         device: torch.device = torch.device("cpu"),
+        pad_length: Optional[int] = None,
     ) -> None:
         """
         Args:
@@ -271,6 +272,9 @@ class DecodeStream(object):
             `get_init_state` in conformer.py
           device:
             The device to run this stream.
+          pad_length:
+            If provided, use this as the padding length directly.
+            Otherwise compute from params.right_context and params.subsampling_factor.
         """
         self.params = params
         self.utt_id = utt_id
@@ -292,7 +296,7 @@ class DecodeStream(object):
         self.ground_truth: str = ""
 
         # The decoding result (partial or final) of current utterance.
-        self.hyp: List = []
+        self.hyp: List[int] = []
 
         # decoder output
         self.decoder_out: Optional[torch.Tensor] = None
@@ -302,7 +306,10 @@ class DecodeStream(object):
         # encoder.streaming_forward
         self.done_frames: int = 0
 
-        self.pad_length = (params.right_context + 2) * params.subsampling_factor + 3
+        if pad_length is not None:
+            self.pad_length = pad_length
+        else:
+            self.pad_length = (params.right_context + 2) * params.subsampling_factor + 3
 
         if params.decoding_method == "greedy_search":
             self.hyp = [params.blank_id] * params.context_size

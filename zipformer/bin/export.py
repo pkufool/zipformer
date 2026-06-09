@@ -130,13 +130,13 @@ from onnxruntime.quantization import QuantType, quantize_dynamic
 from zipformer.modules.scaling_converter import convert_scaled_to_non_scaled
 from zipformer.bin.train import add_model_arguments, get_model, get_params
 
-from zipformer.utils.checkpoint import (
+from zipformer.utils import (
     average_checkpoints,
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
+    make_pad_mask, str2bool, SymbolTable, num_tokens
 )
-from zipformer.utils.utils import make_pad_mask, str2bool, SymbolTable, num_tokens
 
 
 def get_parser():

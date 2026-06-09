@@ -42,17 +42,14 @@ from ssentencepiece import Ssentencepiece
 from zipformer.modules.model import AsrModel
 from zipformer.modules import optim
 from zipformer.modules.optim import Eden, ScaledAdam
-from zipformer.utils.checkpoint import (
+
+from zipformer.utils import save_checkpoint as save_checkpoint_impl
+
+from zipformer.utils import (
     load_checkpoint,
     remove_checkpoints,
     save_checkpoint_with_global_batch_idx,
     update_averaged_model,
-)
-from zipformer.utils.checkpoint import save_checkpoint as save_checkpoint_impl
-
-# from zipformer.utils.hooks import register_inf_check_hooks
-# from zipformer.utils import diagnostics
-from zipformer.utils.utils import (
     cleanup_dist,
     setup_dist,
     get_env_info,

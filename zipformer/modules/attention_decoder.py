@@ -23,7 +23,7 @@ from typing import List, Optional
 import torch
 from zipformer.modules.label_smoothing import LabelSmoothingLoss
 from zipformer.modules.scaling import penalize_abs_values_gt
-from zipformer.utils.utils import make_pad_mask, pad_sequences
+from zipformer.utils import make_pad_mask, pad_sequences
 
 
 class AttentionDecoderModel(torch.nn.Module):
