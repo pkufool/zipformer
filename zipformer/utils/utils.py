@@ -325,6 +325,21 @@ def num_tokens(
         num_tokens -= 1
     return num_tokens
 
+def token_ids_to_text(token_ids: List[int], token_table: SymbolTable) -> str:
+    """Convert token IDs to text using a SymbolTable.
+
+    Supports byte-level BPE tokens in the format <0xNN>.
+    """
+    text = b""
+    for i in token_ids:
+        token = token_table[i]
+        if len(token) >= 4 and token[:3] == "<0x" and token[-1] == ">":
+            byte_val = int(token[1:-1], base=16)
+            text += byte_val.to_bytes(1, byteorder="little")
+        else:
+            text += token.encode(encoding="utf-8")
+    return text.decode(encoding="utf-8").replace("▁", " ").strip()
+
 
 def remove_punctuation(s: str) -> str:
     return re.sub(r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", s)

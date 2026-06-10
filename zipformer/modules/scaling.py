@@ -878,6 +878,32 @@ class BalancerFunction(torch.autograd.Function):
 
         return x_grad, None, None, None, None, None, None
 
+# The following functions convert from the way we historically specified
+# these limitations, as limits on the absolute value and the proportion of positive
+# values, to limits on the RMS value and the (mean / stddev).
+def _balancer_abs_to_rms(x: float) -> float:
+    # for normally distributed data, if the expected absolute value is x, the
+    # expected rms value will be sqrt(pi/2) * x.
+    return 1.25331413732 * x
+
+
+def _balancer_proportion_positive_to_mean(x: float) -> float:
+    # convert x from the range 0..1 to the range -1..1 which the error function returns
+    x = -1 + (2 * x)
+    eps = 1.0e-10
+    # approximate inverse erf
+    # eps is to prevent crashes if x is exactly 0 or 1.
+    # we'll just end up returning a fairly large value.
+    atanh_x = (math.log(1 + x + eps) - math.log(1 - x + eps)) / 2.0
+    # 1 / (sqrt(pi) * ln(2)),
+    # see https://math.stackexchange.com/questions/321569/approximating-the-error-function-erf-by-analytical-functions
+    # this approximation is extremely crude and gets progressively worse for
+    # x very close to -1 or +1, but we mostly care about the "middle" region
+    # e.g. _approx_inverse_erf(0.05) = 0.0407316414078772,
+    # and math.erf(0.0407316414078772) = 0.045935330944660666,
+    # which is pretty close to 0.05.
+    return 0.8139535143 * atanh_x
+
 
 class Balancer(torch.nn.Module):
     """
@@ -941,49 +967,20 @@ class Balancer(torch.nn.Module):
         self.grad_scale = grad_scale
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            return _no_op(x)
         if (
-            torch.jit.is_scripting() or torch.jit.is_tracing()
-            or not x.requires_grad
+            not x.requires_grad
             or (x.is_cuda and self.mem_cutoff(torch.cuda.memory_allocated()))
         ):
             return _no_op(x)
 
         prob = float(self.prob)
         if random.random() < prob:
-            # The following inner-functions convert from the way we historically specified
-            # these limitations, as limits on the absolute value and the proportion of positive
-            # values, to limits on the RMS value and the (mean / stddev).
-            def _abs_to_rms(x):
-                # for normally distributed data, if the expected absolute value is x, the
-                # expected rms value will be sqrt(pi/2) * x.
-                return 1.25331413732 * x
-
-            def _proportion_positive_to_mean(x):
-                def _atanh(x):
-                    eps = 1.0e-10
-                    # eps is to prevent crashes if x is exactly 0 or 1.
-                    # we'll just end up returning a fairly large value.
-                    return (math.log(1 + x + eps) - math.log(1 - x + eps)) / 2.0
-
-                def _approx_inverse_erf(x):
-                    # 1 / (sqrt(pi) * ln(2)),
-                    # see https://math.stackexchange.com/questions/321569/approximating-the-error-function-erf-by-analytical-functions
-                    # this approximation is extremely crude and gets progressively worse for
-                    # x very close to -1 or +1, but we mostly care about the "middle" region
-                    # e.g. _approx_inverse_erf(0.05) = 0.0407316414078772,
-                    # and math.erf(0.0407316414078772) = 0.045935330944660666,
-                    # which is pretty close to 0.05.
-                    return 0.8139535143 * _atanh(x)
-
-                # first convert x from the range 0..1 to the range -1..1 which the error
-                # function returns
-                x = -1 + (2 * x)
-                return _approx_inverse_erf(x)
-
-            min_mean = _proportion_positive_to_mean(float(self.min_positive))
-            max_mean = _proportion_positive_to_mean(float(self.max_positive))
-            min_rms = _abs_to_rms(float(self.min_abs))
-            max_rms = _abs_to_rms(float(self.max_abs))
+            min_mean = _balancer_proportion_positive_to_mean(float(self.min_positive))
+            max_mean = _balancer_proportion_positive_to_mean(float(self.max_positive))
+            min_rms = _balancer_abs_to_rms(float(self.min_abs))
+            max_rms = _balancer_abs_to_rms(float(self.max_abs))
             grad_scale = float(self.grad_scale)
 
             assert x.shape[self.channel_dim] == self.num_channels
@@ -1179,7 +1176,9 @@ class Whiten(torch.nn.Module):
         and nothing will happen in backprop.
         """
         grad_scale = float(self.grad_scale)
-        if torch.jit.is_scripting() or torch.jit.is_tracing() or not x.requires_grad or random.random() > self.prob or grad_scale == 0:
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            return _no_op(x)
+        if not x.requires_grad or random.random() > self.prob or grad_scale == 0:
             return _no_op(x)
         else:
             return WhiteningPenaltyFunction.apply(x, self)
@@ -1401,8 +1400,10 @@ class Dropout3(torch.nn.Module):
         self.shared_dim = shared_dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if torch.jit.is_scripting() or torch.jit.is_tracing():
+            return _no_op(x)
         p = float(self.p)
-        if not self.training or p == 0 or torch.jit.is_scripting() or torch.jit.is_tracing():
+        if not self.training or p == 0:
             return _no_op(x)
         scale = 1.0 / (1 - p)
         rand_shape = list(x.shape)

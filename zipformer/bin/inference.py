@@ -105,9 +105,8 @@ import numpy as np
 import torch
 import torchaudio
 from torch.nn.utils.rnn import pad_sequence
-import kaldi_native_fbank as knf
 
-from zipformer.utils import str2bool, SymbolTable, AttributeDict
+from zipformer.utils import str2bool, SymbolTable, AttributeDict, token_ids_to_text
 from zipformer.decode.search import (
     greedy_search,
     streaming_greedy_search,
@@ -115,12 +114,7 @@ from zipformer.decode.search import (
     streaming_ctc_greedy_search,
 )
 from zipformer.decode.stream import DecodeStream
-from zipformer.modules.onnx_model import OnnxCtcModel, OnnxStreamingCtcModel, OnnxTransducerModel, OnnxStreamingTransducerModel
-
-# ==============================================================================
-# Argument parsing
-# ==============================================================================
-
+from zipformer.modules.model import OnnxCtcModel, OnnxStreamingCtcModel, OnnxTransducerModel, OnnxStreamingTransducerModel
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -259,38 +253,6 @@ def get_audio_durations(filenames: List[str]) -> List[float]:
         info = torchaudio.info(f)
         durations.append(info.num_frames / info.sample_rate)
     return durations
-
-
-# ==============================================================================
-# Token decoding
-# ==============================================================================
-
-def token_ids_to_text(token_ids: List[int], token_table) -> str:
-    """Convert token IDs to text using a k2 SymbolTable."""
-    text = ""
-    for i in token_ids:
-        text += token_table[i]
-    return text.replace("▁", " ").strip()
-
-
-def token_ids_to_text_bpe(token_ids: List[int], tokens_path: str) -> str:
-    """Convert token IDs to text handling byte-level BPE."""
-    id2token = {}
-    with open(tokens_path, encoding="utf-8") as f:
-        for line in f:
-            token, idx = line.split()
-            if token[:3] == "<0x" and token[-1] == ">":
-                token = int(token[1:-1], base=16)
-                assert 0 <= token < 256, token
-                token = token.to_bytes(1, byteorder="little")
-            else:
-                token = token.encode(encoding="utf-8")
-            id2token[int(idx)] = token
-
-    text = b""
-    for i in token_ids:
-        text += id2token[i]
-    return text.decode(encoding="utf-8").replace("▁", " ").strip()
 
 
 # ==============================================================================

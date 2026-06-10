@@ -127,7 +127,6 @@ from onnxconverter_common import float16
 from ssentencepiece import Ssentencepiece
 from onnxruntime.quantization import QuantType, quantize_dynamic
 
-from zipformer.modules.scaling_converter import convert_scaled_to_non_scaled
 from zipformer.bin.train import add_model_arguments, get_model, get_params
 
 from zipformer.utils import (
@@ -135,7 +134,18 @@ from zipformer.utils import (
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
-    make_pad_mask, str2bool, SymbolTable, num_tokens
+    str2bool, SymbolTable, num_tokens
+)
+
+from zipformer.modules.model import (
+    EncoderWrapper,
+    StreamingEncoderWrapper,
+    OnnxEncoderWrapper,
+    OnnxDecoderWrapper,
+    OnnxJoinerWrapper,
+    OnnxCtcWrapper,
+    OnnxStreamingEncoderWrapper,
+    OnnxStreamingCtcWrapper
 )
 
 
@@ -266,135 +276,23 @@ def get_parser():
         help="Set it to true for model file size > 2GB (streaming ONNX export only).",
     )
 
-    parser.add_argument(
-        "--use-whisper-features",
-        type=str2bool,
-        default=False,
-        help="Whether to use whisper features (streaming ONNX export only).",
-    )
-
     add_model_arguments(parser)
 
     return parser
 
 
-# ==============================================================================
-# Torch Export (state_dict / TorchScript)
-# ==============================================================================
-
-
-class EncoderModel(torch.nn.Module):
-    """A wrapper for encoder and encoder_embed (non-streaming JIT export)."""
-
-    def __init__(
-        self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module
-    ) -> None:
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-
-    def forward(
-        self, features: torch.Tensor, feature_lengths: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, x_lens = self.encoder_embed(features, feature_lengths)
-        src_key_padding_mask = make_pad_mask(x_lens)
-        x = x.permute(1, 0, 2)
-        encoder_out, encoder_out_lens = self.encoder(x, x_lens, src_key_padding_mask)
-        encoder_out = encoder_out.permute(1, 0, 2)
-        return encoder_out, encoder_out_lens
-
-
-class StreamingEncoderModel(torch.nn.Module):
-    """A wrapper for encoder and encoder_embed (streaming JIT export)."""
-
-    def __init__(
-        self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module
-    ) -> None:
-        super().__init__()
-        assert len(encoder.chunk_size) == 1, encoder.chunk_size
-        assert len(encoder.left_context_frames) == 1, encoder.left_context_frames
-        self.chunk_size = encoder.chunk_size[0]
-        self.left_context_len = encoder.left_context_frames[0]
-        self.pad_length = 7 + 2 * 3
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-
-    def forward(
-        self,
-        features: torch.Tensor,
-        feature_lengths: torch.Tensor,
-        states: List[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
-        chunk_size = self.chunk_size
-        left_context_len = self.left_context_len
-
-        cached_embed_left_pad = states[-2]
-        x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=features,
-            x_lens=feature_lengths,
-            cached_left_pad=cached_embed_left_pad,
-        )
-        assert x.size(1) == chunk_size, (x.size(1), chunk_size)
-
-        src_key_padding_mask = make_pad_mask(x_lens)
-
-        processed_mask = torch.arange(left_context_len, device=x.device).expand(
-            x.size(0), left_context_len
-        )
-        processed_lens = states[-1]
-        processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
-        new_processed_lens = processed_lens + x_lens
-
-        src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
-
-        x = x.permute(1, 0, 2)
-        encoder_states = states[:-2]
-
-        (
-            encoder_out,
-            encoder_out_lens,
-            new_encoder_states,
-        ) = self.encoder.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            states=encoder_states,
-            src_key_padding_mask=src_key_padding_mask,
-        )
-        encoder_out = encoder_out.permute(1, 0, 2)
-
-        new_states = new_encoder_states + [
-            new_cached_embed_left_pad,
-            new_processed_lens,
-        ]
-        return encoder_out, encoder_out_lens, new_states
-
-    @torch.jit.export
-    def get_init_states(
-        self,
-        batch_size: int = 1,
-        device: torch.device = torch.device("cpu"),
-    ) -> List[torch.Tensor]:
-        states = self.encoder.get_init_states(batch_size, device)
-        embed_states = self.encoder_embed.get_init_states(batch_size, device)
-        states.append(embed_states)
-        processed_lens = torch.zeros(batch_size, dtype=torch.int32, device=device)
-        states.append(processed_lens)
-        return states
-
-
 def export_torch(params, model):
     """Export model as PyTorch state_dict or TorchScript."""
     if params.jit is True:
-        convert_scaled_to_non_scaled(model, inplace=True)
         model.__class__.forward = torch.jit.ignore(model.__class__.forward)
 
         if params.causal:
-            model.encoder = StreamingEncoderModel(model.encoder, model.encoder_embed)
+            model.encoder = StreamingEncoderWrapper(model.encoder, model.encoder_embed)
             chunk_size = model.encoder.chunk_size
             left_context_len = model.encoder.left_context_len
             filename = f"jit_model_chunk_{chunk_size}_left_{left_context_len}.pt"
         else:
-            model.encoder = EncoderModel(model.encoder, model.encoder_embed)
+            model.encoder = EncoderWrapper(model.encoder, model.encoder_embed)
             filename = "jit_model.pt"
 
         logging.info("Using torch.jit.script")
@@ -412,12 +310,10 @@ def export_torch(params, model):
 # Shared ONNX utilities
 # ==============================================================================
 
-
 def add_meta_data(
     filename: str, meta_data: Dict[str, str], use_external_data: bool = False
 ):
     """Add meta data to an ONNX model. It is changed in-place."""
-
     filename = str(filename)
     model = onnx.load(filename)
     for key, value in meta_data.items():
@@ -453,69 +349,11 @@ def export_onnx_fp16_large_2gb(onnx_fp32_path, onnx_fp16_path):
     onnx.save_model(onnx_fp16_model, onnx_fp16_path)
 
 
-# ==============================================================================
-# ONNX Non-streaming Transducer
-# ==============================================================================
-
-
-class OnnxEncoder(torch.nn.Module):
-    """A wrapper for Zipformer and the encoder_proj from the joiner (non-streaming)."""
-
-    def __init__(self, encoder, encoder_embed, encoder_proj):
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.encoder_proj = encoder_proj
-
-    def forward(
-        self, x: torch.Tensor, x_lens: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, x_lens = self.encoder_embed(x, x_lens)
-        src_key_padding_mask = make_pad_mask(x_lens, x.shape[1])
-        x = x.permute(1, 0, 2)
-        encoder_out, encoder_out_lens = self.encoder(x, x_lens, src_key_padding_mask)
-        encoder_out = encoder_out.permute(1, 0, 2)
-        encoder_out = self.encoder_proj(encoder_out)
-        return encoder_out, encoder_out_lens
-
-
-class OnnxDecoder(torch.nn.Module):
-    """A wrapper for Decoder and the decoder_proj from the joiner."""
-
-    def __init__(self, decoder, decoder_proj):
-        super().__init__()
-        self.decoder = decoder
-        self.decoder_proj = decoder_proj
-
-    def forward(self, y: torch.Tensor) -> torch.Tensor:
-        need_pad = False
-        decoder_output = self.decoder(y, need_pad=need_pad)
-        decoder_output = decoder_output.squeeze(1)
-        output = self.decoder_proj(decoder_output)
-        return output
-
-
-class OnnxJoiner(torch.nn.Module):
-    """A wrapper for the joiner."""
-
-    def __init__(self, output_linear):
-        super().__init__()
-        self.output_linear = output_linear
-
-    def forward(
-        self, encoder_out: torch.Tensor, decoder_out: torch.Tensor
-    ) -> torch.Tensor:
-        logit = encoder_out + decoder_out
-        logit = self.output_linear(torch.tanh(logit))
-        return logit
-
-
 def _export_encoder_model_onnx(encoder_model, encoder_filename, opset_version=13):
     x = torch.zeros(1, 100, 80, dtype=torch.float32)
     x_lens = torch.tensor([100], dtype=torch.int64)
 
-    encoder_model = torch.jit.trace(encoder_model, (x, x_lens))
-
+    # encoder_model = torch.jit.trace(encoder_model, (x, x_lens))
     torch.onnx.export(
         encoder_model,
         (x, x_lens),
@@ -609,16 +447,16 @@ def _export_joiner_model_onnx(
 def export_onnx_transducer(params, model):
     """Export non-streaming transducer model to ONNX."""
 
-    encoder = OnnxEncoder(
+    encoder = OnnxEncoderWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         encoder_proj=model.joiner.encoder_proj,
     )
-    decoder = OnnxDecoder(
+    decoder = OnnxDecoderWrapper(
         decoder=model.decoder,
         decoder_proj=model.joiner.decoder_proj,
     )
-    joiner = OnnxJoiner(output_linear=model.joiner.output_linear)
+    joiner = OnnxJoinerWrapper(output_linear=model.joiner.output_linear)
 
     encoder_num_param = sum([p.numel() for p in encoder.parameters()])
     decoder_num_param = sum([p.numel() for p in decoder.parameters()])
@@ -685,33 +523,11 @@ def export_onnx_transducer(params, model):
 # ONNX Non-streaming CTC
 # ==============================================================================
 
-
-class OnnxCtcModel(torch.nn.Module):
-    """A wrapper for encoder_embed, Zipformer, and ctc_output layer (non-streaming)."""
-
-    def __init__(self, encoder, encoder_embed, ctc_output):
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.ctc_output = ctc_output
-
-    def forward(
-        self, x: torch.Tensor, x_lens: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, x_lens = self.encoder_embed(x, x_lens)
-        src_key_padding_mask = make_pad_mask(x_lens)
-        x = x.permute(1, 0, 2)
-        encoder_out, log_probs_len = self.encoder(x, x_lens, src_key_padding_mask)
-        encoder_out = encoder_out.permute(1, 0, 2)
-        log_probs = self.ctc_output(encoder_out)
-        return log_probs, log_probs_len
-
-
 def _export_ctc_model_onnx(model, filename, opset_version=11):
     x = torch.zeros(1, 100, 80, dtype=torch.float32)
     x_lens = torch.tensor([100], dtype=torch.int64)
 
-    model = torch.jit.trace(model, (x, x_lens))
+    # model = torch.jit.trace(model, (x, x_lens))
 
     torch.onnx.export(
         model,
@@ -742,7 +558,7 @@ def _export_ctc_model_onnx(model, filename, opset_version=11):
 def export_onnx_ctc(params, model):
     """Export non-streaming CTC model to ONNX."""
 
-    ctc_model = OnnxCtcModel(
+    ctc_model = OnnxCtcWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         ctc_output=model.ctc_output,
@@ -775,7 +591,6 @@ def export_onnx_ctc(params, model):
 # ==============================================================================
 # ONNX Streaming Transducer
 # ==============================================================================
-
 
 def build_streaming_inputs_outputs(
     tensors, i, inputs, outputs, input_names, output_names
@@ -941,92 +756,19 @@ def export_streaming_encoder_onnx(
     )
 
 
-class OnnxStreamingEncoder(torch.nn.Module):
-    """A wrapper for Zipformer and the encoder_proj from the joiner (streaming)."""
-
-    def __init__(self, encoder, encoder_embed, encoder_proj):
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.encoder_proj = encoder_proj
-        self.chunk_size = encoder.chunk_size[0]
-        self.left_context_len = encoder.left_context_frames[0]
-        self.pad_length = 7 + 2 * 3
-
-    def forward(
-        self, x: torch.Tensor, states: List[torch.Tensor]
-    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        N = x.size(0)
-        T = self.chunk_size * 2 + self.pad_length
-        x_lens = torch.tensor([T] * N, device=x.device)
-        left_context_len = self.left_context_len
-
-        cached_embed_left_pad = states[-2]
-        x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            cached_left_pad=cached_embed_left_pad,
-        )
-        assert x.size(1) == self.chunk_size, (x.size(1), self.chunk_size)
-
-        src_key_padding_mask = torch.zeros(N, self.chunk_size, dtype=torch.bool)
-
-        processed_mask = torch.arange(left_context_len, device=x.device).expand(
-            x.size(0), left_context_len
-        )
-        processed_lens = states[-1]
-        processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
-        new_processed_lens = processed_lens + x_lens
-        src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
-
-        x = x.permute(1, 0, 2)
-        encoder_states = states[:-2]
-        logging.info(f"len_encoder_states={len(encoder_states)}")
-        (
-            encoder_out,
-            encoder_out_lens,
-            new_encoder_states,
-        ) = self.encoder.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            states=encoder_states,
-            src_key_padding_mask=src_key_padding_mask,
-        )
-        encoder_out = encoder_out.permute(1, 0, 2)
-        encoder_out = self.encoder_proj(encoder_out)
-
-        new_states = new_encoder_states + [
-            new_cached_embed_left_pad,
-            new_processed_lens,
-        ]
-        return encoder_out, new_states
-
-    def get_init_states(
-        self,
-        batch_size: int = 1,
-        device: torch.device = torch.device("cpu"),
-    ) -> List[torch.Tensor]:
-        states = self.encoder.get_init_states(batch_size, device)
-        embed_states = self.encoder_embed.get_init_states(batch_size, device)
-        states.append(embed_states)
-        processed_lens = torch.zeros(batch_size, dtype=torch.int64, device=device)
-        states.append(processed_lens)
-        return states
-
-
 def export_onnx_streaming_transducer(params, model):
     """Export streaming transducer model to ONNX."""
 
-    encoder = OnnxStreamingEncoder(
+    encoder = OnnxStreamingEncoderWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         encoder_proj=model.joiner.encoder_proj,
     )
-    decoder = OnnxDecoder(
+    decoder = OnnxDecoderWrapper(
         decoder=model.decoder,
         decoder_proj=model.joiner.decoder_proj,
     )
-    joiner = OnnxJoiner(output_linear=model.joiner.output_linear)
+    joiner = OnnxJoinerWrapper(output_linear=model.joiner.output_linear)
 
     encoder_num_param = sum([p.numel() for p in encoder.parameters()])
     decoder_num_param = sum([p.numel() for p in decoder.parameters()])
@@ -1133,118 +875,10 @@ def export_onnx_streaming_transducer(params, model):
 # ==============================================================================
 # ONNX Streaming CTC
 # ==============================================================================
-
-class OnnxStreamingCtcModel(torch.nn.Module):
-    """A wrapper for Zipformer and the ctc_head (streaming)."""
-
-    def __init__(
-        self,
-        encoder: torch.nn.Module,
-        encoder_embed: torch.nn.Module,
-        ctc_output: torch.nn.Module,
-    ):
-        """
-        Args:
-          encoder:
-            A Zipformer encoder.
-          encoder_proj:
-            The projection layer for encoder from the joiner.
-          ctc_output:
-            The ctc head.
-        """
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.ctc_output = ctc_output
-        self.chunk_size = encoder.chunk_size[0]
-        self.left_context_len = encoder.left_context_frames[0]
-        self.pad_length = 7 + 2 * 3
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        states: List[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
-        N = x.size(0)
-        T = self.chunk_size * 2 + self.pad_length
-        x_lens = torch.tensor([T] * N, device=x.device)
-        left_context_len = self.left_context_len
-
-        cached_embed_left_pad = states[-2]
-        x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            cached_left_pad=cached_embed_left_pad,
-        )
-        assert x.size(1) == self.chunk_size, (x.size(1), self.chunk_size)
-
-        src_key_padding_mask = torch.zeros(N, self.chunk_size, dtype=torch.bool)
-
-        # processed_mask is used to mask out initial states
-        processed_mask = torch.arange(left_context_len, device=x.device).expand(
-            x.size(0), left_context_len
-        )
-        processed_lens = states[-1]  # (batch,)
-        # (batch, left_context_size)
-        processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
-        # Update processed lengths
-        new_processed_lens = processed_lens + x_lens
-        # (batch, left_context_size + chunk_size)
-        src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
-
-        x = x.permute(1, 0, 2)
-        encoder_states = states[:-2]
-        logging.info(f"len_encoder_states={len(encoder_states)}")
-        (
-            encoder_out,
-            encoder_out_lens,
-            new_encoder_states,
-        ) = self.encoder.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            states=encoder_states,
-            src_key_padding_mask=src_key_padding_mask,
-        )
-        encoder_out = encoder_out.permute(1, 0, 2)
-        encoder_out = self.ctc_output(encoder_out)
-        # Now encoder_out is of shape (N, T, ctc_output_dim)
-
-        new_states = new_encoder_states + [
-            new_cached_embed_left_pad,
-            new_processed_lens,
-        ]
-
-        return encoder_out, new_states
-
-    def get_init_states(
-        self,
-        batch_size: int = 1,
-        device: torch.device = torch.device("cpu"),
-    ) -> List[torch.Tensor]:
-        """
-        Returns a list of cached tensors of all encoder layers. For layer-i, states[i*6:(i+1)*6]
-        is (cached_key, cached_nonlin_attn, cached_val1, cached_val2, cached_conv1, cached_conv2).
-        states[-2] is the cached left padding for ConvNeXt module,
-        of shape (batch_size, num_channels, left_pad, num_freqs)
-        states[-1] is processed_lens of shape (batch,), which records the number
-        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
-        """
-        states = self.encoder.get_init_states(batch_size, device)
-
-        embed_states = self.encoder_embed.get_init_states(batch_size, device)
-
-        states.append(embed_states)
-
-        processed_lens = torch.zeros(batch_size, dtype=torch.int64, device=device)
-        states.append(processed_lens)
-
-        return states
-
-
 def export_onnx_streaming_ctc(params, model):
     """Export streaming CTC model to ONNX."""
     
-    ctc_model = OnnxStreamingCtcModel(
+    ctc_model = OnnxStreamingCtcWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         ctc_output=model.ctc_output,
@@ -1315,8 +949,6 @@ def export_onnx_streaming_ctc(params, model):
 # ==============================================================================
 # Shared checkpoint loading
 # ==============================================================================
-
-
 def load_model_checkpoint(params, model, strict=True, device=torch.device("cpu")):
     """Load and average checkpoints into model."""
     model.to(device)
@@ -1404,8 +1036,6 @@ def load_model_checkpoint(params, model, strict=True, device=torch.device("cpu")
 # ==============================================================================
 # Main
 # ==============================================================================
-
-
 @torch.no_grad()
 def main():
     args = get_parser().parse_args()
@@ -1453,13 +1083,11 @@ def main():
         export_torch(params, model)
     elif params.export_type == "onnx":
         if params.streaming:
-            convert_scaled_to_non_scaled(model, inplace=True, is_onnx=False)
             if params.ctc:
                 export_onnx_streaming_ctc(params, model)
             else:
                 export_onnx_streaming_transducer(params, model)
         else:
-            convert_scaled_to_non_scaled(model, inplace=True, is_onnx=True)
             if params.ctc:
                 export_onnx_ctc(params, model)
             else:
