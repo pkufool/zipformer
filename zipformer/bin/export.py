@@ -1452,14 +1452,14 @@ def main():
     if params.export_type == "torch":
         export_torch(params, model)
     elif params.export_type == "onnx":
-        convert_scaled_to_non_scaled(model, inplace=True, is_onnx=True)
-
         if params.streaming:
+            convert_scaled_to_non_scaled(model, inplace=True, is_onnx=False)
             if params.ctc:
                 export_onnx_streaming_ctc(params, model)
             else:
                 export_onnx_streaming_transducer(params, model)
         else:
+            convert_scaled_to_non_scaled(model, inplace=True, is_onnx=True)
             if params.ctc:
                 export_onnx_ctc(params, model)
             else:

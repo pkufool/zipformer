@@ -805,110 +805,144 @@ def infer_onnx_ctc(args) -> List[dict]:
 
 
 def infer_onnx_streaming(args) -> List[dict]:
-    """ONNX streaming transducer inference."""
+    """ONNX streaming transducer inference with DecodeStream.
+
+    Processes each utterance sequentially (ONNX streaming models are batch_size=1).
+    Uses DecodeStream to manage features and streaming_greedy_search for decoding.
+    Encoder states are stored in stream.states and restored before each chunk.
+    """
     model = OnnxStreamingTransducerModel(
-        args.encoder_model_filename,
-        args.decoder_model_filename,
-        args.joiner_model_filename,
+        args.encoder,
+        args.decoder,
+        args.joiner,
     )
 
+    features, feature_lengths = extract_features(args)
+
     token_table = SymbolTable.from_file(args.tokens)
+    context_size = model.context_size
+    segment = model.segment
+    offset = model.offset
     durations = get_audio_durations(args.sound_files)
-    sample_rate = args.sample_rate
+
+    params = AttributeDict(
+        {
+            "blank_id": getattr(model, "blank_id", 0),
+            "context_size": context_size,
+            "decoding_method": "greedy_search",
+        }
+    )
+
     results = []
-
-    for idx, sound_file in enumerate(args.sound_files):
+    for idx in range(len(args.sound_files)):
         model.reset_states()
-        online_fbank = create_streaming_fbank(sample_rate)
-        wave_samples = read_sound_files([sound_file], sample_rate)[0]
 
-        tail_padding = torch.zeros(int(0.3 * sample_rate), dtype=torch.float32)
-        wave_samples = torch.cat([wave_samples, tail_padding])
+        stream = DecodeStream(
+            params=params,
+            utt_id=args.sound_files[idx],
+            initial_states=list(model.states),
+            device=torch.device("cpu"),
+            pad_length=segment - offset,
+        )
+        feat = features[idx, : feature_lengths[idx].item()].cpu()
+        stream.set_features(feat)
 
-        num_processed_frames = 0
-        segment = model.segment
-        offset = model.offset
-        context_size = model.context_size
-        hyp = None
-        decoder_out = None
-
-        chunk = int(1 * sample_rate)
-        start = 0
-        while start < wave_samples.numel():
-            end = min(start + chunk, wave_samples.numel())
-            samples = wave_samples[start:end]
-            start += chunk
-
-            online_fbank.accept_waveform(sampling_rate=sample_rate, waveform=samples)
-
-            while online_fbank.num_frames_ready - num_processed_frames >= segment:
-                frames = []
-                for i in range(segment):
-                    frames.append(online_fbank.get_frame(num_processed_frames + i))
-                num_processed_frames += offset
-                frames = torch.cat(frames, dim=0).unsqueeze(0)
-                encoder_out = model.run_encoder(frames)
-                hyp, decoder_out = greedy_search_transducer_streaming_onnx(
-                    model,
-                    encoder_out,
-                    context_size,
-                    decoder_out,
-                    hyp,
+        while not stream.done:
+            chunk_feat, chunk_len = stream.get_feature_frames(offset)
+            if chunk_len < segment:
+                chunk_feat = torch.nn.functional.pad(
+                    chunk_feat,
+                    (0, 0, 0, segment - chunk_len),
+                    mode="constant",
+                    value=math.log(1e-10),
                 )
+            chunk_feat = chunk_feat.unsqueeze(0)  # (1, segment, feat_dim)
+            encoder_out = model.run_encoder(chunk_feat)  # (1, T', C)
+            if encoder_out.ndim == 2:
+                encoder_out = encoder_out.unsqueeze(0)
 
-        if hyp is not None:
-            text = token_ids_to_text(hyp[context_size:], token_table)
-        else:
-            text = ""
+            streaming_greedy_search(
+                model=model,
+                encoder_out=encoder_out,
+                streams=[stream],
+            )
+
+        hyp = stream.hyp[context_size:]
+        text = token_ids_to_text(hyp, token_table) if hyp else ""
         results.append(
-            {"filename": sound_file, "text": text, "duration": durations[idx]}
+            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
         )
 
     return results
 
 
 def infer_onnx_streaming_ctc(args) -> List[dict]:
-    """ONNX streaming CTC inference."""
-    model = OnnxStreamingCtcModel(args.nn_model)
+    """ONNX streaming CTC inference with DecodeStream.
 
+    Processes each utterance sequentially (ONNX streaming models are batch_size=1).
+    Uses DecodeStream to manage features and streaming_ctc_greedy_search for decoding.
+    Encoder states are stored in stream.states and restored before each chunk.
+    """
+    model = OnnxStreamingCtcModel(args.model)
+
+    features, feature_lengths = extract_features(args)
+
+    token_table = SymbolTable.from_file(args.tokens)
+    segment = model.segment
+    offset = model.offset
     durations = get_audio_durations(args.sound_files)
-    sample_rate = args.sample_rate
+
+    params = AttributeDict(
+        {
+            "blank_id": 0,
+            "context_size": 1,
+            "decoding_method": "greedy_search",
+        }
+    )
+
     results = []
-
-    for idx, sound_file in enumerate(args.sound_files):
+    for idx in range(len(args.sound_files)):
         model.reset_states()
-        online_fbank = create_streaming_fbank(sample_rate)
-        wave_samples = read_sound_files([sound_file], sample_rate)[0]
 
-        tail_padding = torch.zeros(int(0.3 * sample_rate), dtype=torch.float32)
-        wave_samples = torch.cat([wave_samples, tail_padding])
+        stream = DecodeStream(
+            params=params,
+            utt_id=args.sound_files[idx],
+            initial_states=list(model.states),
+            device=torch.device("cpu"),
+            pad_length=segment - offset,
+        )
+        feat = features[idx, : feature_lengths[idx].item()].cpu()
+        stream.set_features(feat)
+        stream.hyp = []
 
-        num_processed_frames = 0
-        segment = model.segment
-        offset = model.offset
-        hyp = []
+        while not stream.done:
+            chunk_feat, chunk_len = stream.get_feature_frames(offset)
+            if chunk_len < segment:
+                chunk_feat = torch.nn.functional.pad(
+                    chunk_feat,
+                    (0, 0, 0, segment - chunk_len),
+                    mode="constant",
+                    value=math.log(1e-10),
+                )
+            chunk_feat = chunk_feat.unsqueeze(0)  # (1, segment, feat_dim)
 
-        chunk = int(1 * sample_rate)
-        start = 0
-        while start < wave_samples.numel():
-            end = min(start + chunk, wave_samples.numel())
-            samples = wave_samples[start:end]
-            start += chunk
+            ctc_log_probs = model(chunk_feat)  # (1, T', vocab_size)
 
-            online_fbank.accept_waveform(sampling_rate=sample_rate, waveform=samples)
+            if ctc_log_probs.ndim == 2:
+                ctc_log_probs = ctc_log_probs.unsqueeze(0)
+            T = ctc_log_probs.size(1)
+            encoder_out_lens = torch.tensor([T], dtype=torch.int32)
 
-            while online_fbank.num_frames_ready - num_processed_frames >= segment:
-                frames = []
-                for i in range(segment):
-                    frames.append(online_fbank.get_frame(num_processed_frames + i))
-                num_processed_frames += offset
-                frames = torch.cat(frames, dim=0).unsqueeze(0)
-                log_probs = model(frames)
-                hyp += greedy_search_ctc(log_probs)
+            streaming_ctc_greedy_search(
+                model=model,
+                encoder_out=ctc_log_probs,
+                encoder_out_lens=encoder_out_lens,
+                streams=[stream],
+            )
 
-        text = token_ids_to_text_bpe(hyp, args.tokens)
+        text = token_ids_to_text(stream.hyp, token_table) if stream.hyp else ""
         results.append(
-            {"filename": sound_file, "text": text, "duration": durations[idx]}
+            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
         )
 
     return results
