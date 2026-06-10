@@ -784,36 +784,23 @@ def infer_onnx(args) -> List[dict]:
 
 def infer_onnx_ctc(args) -> List[dict]:
     """ONNX non-streaming CTC inference."""
+    model = OnnxCtcModel(args.model)
 
-    model = OnnxCtcModel(args.nn_model)
-
-    fbank = create_fbank(args.sample_rate)
-    waves = read_sound_files(args.sound_files, args.sample_rate)
-
-    features = fbank(waves)
-    feature_lengths = [f.size(0) for f in features]
-    features = pad_sequence(features, batch_first=True, padding_value=math.log(1e-10))
-    feature_lengths = torch.tensor(feature_lengths, dtype=torch.int64)
+    features, feature_lengths = extract_features(args)
+    features = features.cpu()
+    feature_lengths = feature_lengths.cpu()
 
     log_probs, log_probs_len = model(features, feature_lengths)
 
-    token_table = load_token_table(args.tokens)
+    hyps = ctc_greedy_search(log_probs, log_probs_len)
+
+    token_table = SymbolTable.from_file(args.tokens)
     durations = get_audio_durations(args.sound_files)
-    blank_id = 0
 
     results = []
-    for i in range(log_probs.size(0)):
-        indexes = log_probs[i, : log_probs_len[i]].argmax(dim=-1)
-        token_ids = torch.unique_consecutive(indexes)
-        token_ids = token_ids[token_ids != blank_id].tolist()
-        text = token_ids_to_text(token_ids, token_table)
-        results.append(
-            {
-                "filename": args.sound_files[i],
-                "text": text,
-                "duration": durations[i],
-            }
-        )
+    for filename, hyp, dur in zip(args.sound_files, hyps, durations):
+        text = token_ids_to_text(hyp, token_table)
+        results.append({"filename": filename, "text": text, "duration": dur})
     return results
 
 
