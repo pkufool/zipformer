@@ -555,6 +555,8 @@ def infer_jit_streaming(args) -> List[dict]:
         all_streams.append(stream)
         decode_streams.append(stream)
 
+    tail_length = chunk_length + pad_length
+
     while len(decode_streams) > 0:
         batch_features = []
         batch_feature_lens = []
@@ -572,21 +574,22 @@ def infer_jit_streaming(args) -> List[dict]:
             padding_value=math.log(1e-10),
         )
 
-        # Ensure minimum length for encoder subsampling
-        tail_length = chunk_length + pad_length
+        # Pad features to tail_length and set all feature_lens to tail_length
+        # so encoder always produces chunk_size output frames for every stream.
         if batch_features.size(1) < tail_length:
-            pad_len = tail_length - batch_features.size(1)
-            batch_feature_lens += pad_len
             batch_features = torch.nn.functional.pad(
                 batch_features,
-                (0, 0, 0, pad_len),
+                (0, 0, 0, tail_length - batch_features.size(1)),
                 mode="constant",
                 value=math.log(1e-10),
             )
+        batch_feature_lens = torch.full_like(
+            batch_feature_lens, tail_length
+        )
 
         stacked_states = stack_states([s.states for s in decode_streams])
 
-        encoder_out, _encoder_out_lens, new_states = model.encoder(
+        encoder_out, encoder_out_lens, new_states = model.encoder(
             features=batch_features,
             feature_lengths=batch_feature_lens,
             states=stacked_states,
