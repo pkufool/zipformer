@@ -1159,6 +1159,54 @@ def ctc_greedy_search(
     return [h[h != blank_id].tolist() for h in hyps]
 
 
+def streaming_ctc_greedy_search(
+    model: torch.nn.Module,
+    encoder_out: torch.Tensor,
+    encoder_out_lens: torch.Tensor,
+    streams: List[DecodeStream],
+    blank_id: int = 0,
+) -> None:
+    """Streaming CTC greedy search in batch mode.
+
+    Decodes each chunk of encoder output and appends non-blank tokens to
+    the corresponding stream's hyp list. Handles the boundary between chunks
+    by tracking the last emitted token per stream to avoid duplicating tokens
+    at chunk boundaries.
+
+    Args:
+      model:
+        The model (used for ctc_output projection).
+      encoder_out:
+        Output from the encoder. Its shape is (N, T, C), where N >= 1.
+      encoder_out_lens:
+        A 1-D tensor of shape (N,) containing valid frame counts per stream.
+      streams:
+        A list of DecodeStream objects.
+      blank_id:
+        The blank token id.
+    """
+    assert len(streams) == encoder_out.size(0)
+    assert encoder_out.ndim == 3
+
+    ctc_output = model.ctc_output(encoder_out)
+    batch = ctc_output.size(0)
+    index = ctc_output.argmax(dim=-1)  # (N, T)
+
+    for i in range(batch):
+        valid_len = encoder_out_lens[i].item()
+        tokens = index[i, :valid_len]
+
+        prev = streams[i].hyp[-1] if len(streams[i].hyp) > 0 else -1
+
+        for t in range(valid_len):
+            tok = tokens[t].item()
+            if tok == blank_id:
+                prev = blank_id
+            elif tok != prev:
+                streams[i].hyp.append(tok)
+                prev = tok
+
+
 def _step_worker(
     log_probs: torch.Tensor,
     indexes: torch.Tensor,

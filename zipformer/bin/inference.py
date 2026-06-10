@@ -108,7 +108,12 @@ from torch.nn.utils.rnn import pad_sequence
 import kaldi_native_fbank as knf
 
 from zipformer.utils import str2bool, SymbolTable, AttributeDict
-from zipformer.decode.search import greedy_search, streaming_greedy_search
+from zipformer.decode.search import (
+    greedy_search,
+    streaming_greedy_search,
+    ctc_greedy_search,
+    streaming_ctc_greedy_search,
+)
 from zipformer.decode.stream import DecodeStream
 
 # ==============================================================================
@@ -633,6 +638,147 @@ def infer_jit_streaming(args) -> List[dict]:
     return results
 
 
+def infer_jit_ctc(args) -> List[dict]:
+    """JIT non-streaming CTC inference."""
+    model = torch.jit.load(args.model)
+    model.eval()
+    model.to(args.device)
+
+    features, feature_lengths = extract_features(args)
+
+    encoder_out, encoder_out_lens = model.encoder(
+        features=features,
+        feature_lengths=feature_lengths,
+    )
+
+    ctc_output = model.ctc_output(encoder_out)
+    hyps = ctc_greedy_search(ctc_output, encoder_out_lens)
+
+    token_table = SymbolTable.from_file(args.tokens)
+    durations = get_audio_durations(args.sound_files)
+
+    results = []
+    for filename, hyp, dur in zip(args.sound_files, hyps, durations):
+        text = token_ids_to_text(hyp, token_table)
+        results.append({"filename": filename, "text": text, "duration": dur})
+    return results
+
+
+def infer_jit_streaming_ctc(args) -> List[dict]:
+    """JIT streaming CTC inference with dynamic batching.
+
+    Uses DecodeStream to store intermediate encoder states, and
+    streaming_ctc_greedy_search for decoding. All audio features are extracted
+    upfront (non-streaming), then processed chunk-by-chunk with dynamic batching.
+    """
+    logging.info(f"Infer JIT streaming CTC with model {args.model} on device {args.device}")
+    model = torch.jit.load(args.model)
+    model.eval()
+    model.to(args.device)
+    model.device = args.device
+
+    features, feature_lengths = extract_features(args)
+
+    token_table = SymbolTable.from_file(args.tokens)
+    chunk_length = model.encoder.chunk_size * 2
+    pad_length = model.encoder.pad_length
+
+    durations = get_audio_durations(args.sound_files)
+
+    params = AttributeDict(
+        {
+            "blank_id": 0,
+            "context_size": 1,
+            "decoding_method": "greedy_search",
+        }
+    )
+
+    num_streams = len(args.sound_files)
+    all_streams = []
+    decode_streams = []
+    for idx in range(num_streams):
+        initial_states = model.encoder.get_init_states(device=args.device)
+        stream = DecodeStream(
+            params=params,
+            utt_id=args.sound_files[idx],
+            initial_states=initial_states,
+            device=args.device,
+            pad_length=pad_length,
+        )
+        stream.set_features(features[idx, : feature_lengths[idx].item()])
+        stream.hyp = []
+        all_streams.append(stream)
+        decode_streams.append(stream)
+
+    tail_length = chunk_length + pad_length
+
+    batch_states = stack_states([s.states for s in decode_streams])
+
+    while len(decode_streams) > 0:
+        batch_features = []
+        batch_feature_lens = []
+        for stream in decode_streams:
+            feat, feat_len = stream.get_feature_frames(chunk_length)
+            batch_features.append(feat)
+            batch_feature_lens.append(feat_len)
+
+        batch_feature_lens = torch.tensor(
+            batch_feature_lens, dtype=torch.int32, device=args.device
+        )
+        batch_features = pad_sequence(
+            batch_features,
+            batch_first=True,
+            padding_value=math.log(1e-10),
+        )
+
+        if batch_features.size(1) < tail_length:
+            batch_features = torch.nn.functional.pad(
+                batch_features,
+                (0, 0, 0, tail_length - batch_features.size(1)),
+                mode="constant",
+                value=math.log(1e-10),
+            )
+        batch_feature_lens = torch.full_like(
+            batch_feature_lens, tail_length
+        )
+
+        encoder_out, encoder_out_lens, new_states = model.encoder(
+            features=batch_features,
+            feature_lengths=batch_feature_lens,
+            states=batch_states,
+        )
+
+        streaming_ctc_greedy_search(
+            model=model,
+            encoder_out=encoder_out,
+            encoder_out_lens=encoder_out_lens,
+            streams=decode_streams,
+        )
+
+        prev_count = len(decode_streams)
+        done_mask = [s.done for s in decode_streams]
+        decode_streams = [s for s, done in zip(decode_streams, done_mask) if not done]
+
+        if len(decode_streams) < prev_count:
+            if decode_streams:
+                per_stream_states = unstack_states(new_states)
+                remaining = [
+                    st for st, done in zip(per_stream_states, done_mask) if not done
+                ]
+                batch_states = stack_states(remaining)
+        else:
+            batch_states = new_states
+
+    results = []
+    for idx in range(num_streams):
+        stream = all_streams[idx]
+        text = token_ids_to_text(stream.hyp, token_table) if stream.hyp else ""
+        results.append(
+            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
+        )
+    return results
+
+
 def infer_onnx(args) -> List[dict]:
     """ONNX non-streaming transducer inference."""
     from torch.nn.utils.rnn import pad_sequence
@@ -953,7 +1099,12 @@ def main():
 
     if args.model_type == "jit":
         if args.streaming:
-            results = infer_jit_streaming(args)
+            if args.ctc:
+                results = infer_jit_streaming_ctc(args)
+            else:
+                results = infer_jit_streaming(args)
+        elif args.ctc:
+            results = infer_jit_ctc(args)
         else:
             results = infer_jit(args)
     elif args.model_type == "onnx":
