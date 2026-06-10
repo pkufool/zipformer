@@ -275,15 +275,13 @@ def greedy_search(
         )
 
 
-def streaming_greedy_search(
+def _streaming_greedy_search_batch(
     model: torch.nn.Module,
     encoder_out: torch.Tensor,
     streams: List[DecodeStream],
-    max_sym_per_frame: int = 1,
     blank_penalty: float = 0.0,
-    return_timestamps: bool = False,
 ) -> None:
-    """Greedy search in batch mode. It hardcodes --max-sym-per-frame=1.
+    """Streaming greedy search in batch mode. It hardcodes --max-sym-per-frame=1.
 
     Args:
       model:
@@ -292,6 +290,8 @@ def streaming_greedy_search(
         Output from the encoder. Its shape is (N, T, C), where N >= 1.
       streams:
         A list of Stream objects.
+      blank_penalty:
+        The score used to penalize blank probability.
     """
     assert len(streams) == encoder_out.size(0)
     assert encoder_out.ndim == 3
@@ -315,29 +315,26 @@ def streaming_greedy_search(
             stream.decoder_out = decoder_out
 
     for t in range(T):
-        # current_encoder_out's shape: (batch_size, 1, encoder_out_dim)
         current_encoder_out = encoder_out[:, t : t + 1, :]  # noqa
 
-        # decoder_out is of shape (N, 1, decoder_out_dim)
-        decoder_out = torch.cat([stream.decoder_out for stream in streams], dim=0)
+        decoder_out = torch.cat(
+            [stream.decoder_out for stream in streams], dim=0
+        )
 
         logits = model.joiner(
             current_encoder_out.unsqueeze(2),
             decoder_out.unsqueeze(1),
             project_input=False,
         )
-        # logits'shape (batch_size,  vocab_size)
         logits = logits.squeeze(1).squeeze(1)
 
         if blank_penalty != 0.0:
             logits[:, 0] -= blank_penalty
 
-        assert logits.ndim == 2, logits.shape
         y = logits.argmax(dim=1).tolist()
         for i, v in enumerate(y):
             if v != blank_id:
                 streams[i].hyp.append(v)
-                # update decoder output
                 decoder_input = torch.tensor(
                     [streams[i].hyp[-context_size:]],
                     device=device,
@@ -349,6 +346,106 @@ def streaming_greedy_search(
                 )
                 decoder_out = model.joiner.decoder_proj(decoder_out)
                 streams[i].decoder_out = decoder_out
+
+
+def streaming_greedy_search(
+    model: torch.nn.Module,
+    encoder_out: torch.Tensor,
+    streams: List[DecodeStream],
+    max_sym_per_frame: int = 1,
+    blank_penalty: float = 0.0,
+    return_timestamps: bool = False,
+) -> None:
+    """Greedy search in batch mode for streaming transducer.
+
+    Args:
+      model:
+        The transducer model.
+      encoder_out:
+        Output from the encoder. Its shape is (N, T, C), where N >= 1.
+      streams:
+        A list of Stream objects.
+      max_sym_per_frame:
+        Maximum number of symbols per frame. If it is set to 1, each frame
+        emits at most one non-blank symbol. If > 1, multiple symbols can be
+        emitted per frame until either blank is predicted or the limit is hit.
+      blank_penalty:
+        The score used to penalize blank probability.
+    """
+    assert len(streams) == encoder_out.size(0)
+    assert encoder_out.ndim == 3
+
+    if max_sym_per_frame == 1:
+        return _streaming_greedy_search_batch(
+            model=model,
+            encoder_out=encoder_out,
+            streams=streams,
+            blank_penalty=blank_penalty,
+        )
+
+    blank_id = model.decoder.blank_id
+    context_size = model.decoder.context_size
+    device = model.device
+    T = encoder_out.size(1)
+
+    for stream in streams:
+        if stream.decoder_out is not None:
+            continue
+        else:
+            if len(stream.hyp) == 0:
+                stream.hyp = [-1] * (context_size - 1) + [blank_id]
+            decoder_input = torch.tensor(
+                [stream.hyp[-context_size:]], device=device, dtype=torch.int64
+            ).reshape(1, context_size)
+            decoder_out = model.decoder(decoder_input, need_pad=False)
+            decoder_out = model.joiner.decoder_proj(decoder_out)
+            stream.decoder_out = decoder_out
+
+    batch_size = len(streams)
+
+    for t in range(T):
+        current_encoder_out = encoder_out[:, t : t + 1, :]  # noqa
+
+        sym_per_frame = [0] * batch_size
+        done = [False] * batch_size
+
+        while not all(done):
+            decoder_out = torch.cat(
+                [stream.decoder_out for stream in streams], dim=0
+            )
+
+            logits = model.joiner(
+                current_encoder_out.unsqueeze(2),
+                decoder_out.unsqueeze(1),
+                project_input=False,
+            )
+            logits = logits.squeeze(1).squeeze(1)
+
+            if blank_penalty != 0.0:
+                logits[:, 0] -= blank_penalty
+
+            y = logits.argmax(dim=1).tolist()
+            for i, v in enumerate(y):
+                if done[i]:
+                    continue
+                if v == blank_id:
+                    done[i] = True
+                else:
+                    streams[i].hyp.append(v)
+                    sym_per_frame[i] += 1
+                    decoder_input = torch.tensor(
+                        [streams[i].hyp[-context_size:]],
+                        device=device,
+                        dtype=torch.int64,
+                    )
+                    decoder_out = model.decoder(
+                        decoder_input,
+                        need_pad=False,
+                    )
+                    decoder_out = model.joiner.decoder_proj(decoder_out)
+                    streams[i].decoder_out = decoder_out
+                    if sym_per_frame[i] >= max_sym_per_frame:
+                        done[i] = True
 
 
 class HypsShape:
