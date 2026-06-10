@@ -557,6 +557,10 @@ def infer_jit_streaming(args) -> List[dict]:
 
     tail_length = chunk_length + pad_length
 
+    # Pre-stack initial states; maintain batched states across iterations
+    # to avoid redundant stack/unstack when batch composition is unchanged.
+    batch_states = stack_states([s.states for s in decode_streams])
+
     while len(decode_streams) > 0:
         batch_features = []
         batch_feature_lens = []
@@ -587,17 +591,11 @@ def infer_jit_streaming(args) -> List[dict]:
             batch_feature_lens, tail_length
         )
 
-        stacked_states = stack_states([s.states for s in decode_streams])
-
         encoder_out, encoder_out_lens, new_states = model.encoder(
             features=batch_features,
             feature_lengths=batch_feature_lens,
-            states=stacked_states,
+            states=batch_states,
         )
-
-        per_stream_states = unstack_states(new_states)
-        for j, stream in enumerate(decode_streams):
-            stream.states = per_stream_states[j]
 
         encoder_out = model.joiner.encoder_proj(encoder_out)
 
@@ -607,7 +605,21 @@ def infer_jit_streaming(args) -> List[dict]:
             streams=decode_streams,
         )
 
-        decode_streams = [s for s in decode_streams if not s.done]
+        prev_count = len(decode_streams)
+        done_mask = [s.done for s in decode_streams]
+        decode_streams = [s for s, done in zip(decode_streams, done_mask) if not done]
+
+        if len(decode_streams) < prev_count:
+            # Batch composition changed - unstack and re-stack only remaining streams
+            if decode_streams:
+                per_stream_states = unstack_states(new_states)
+                remaining = [
+                    st for st, done in zip(per_stream_states, done_mask) if not done
+                ]
+                batch_states = stack_states(remaining)
+        else:
+            # Batch unchanged - reuse encoder output states directly
+            batch_states = new_states
 
     results = []
     for idx in range(num_streams):
