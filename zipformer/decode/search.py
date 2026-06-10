@@ -31,10 +31,11 @@ from zipformer.decode.stream import (
     AsrResults,
     KeywordResult,
 )
+from zipformer.modules.onnx_model import OnnxTransducerModel, OnnxStreamingTransducerModel, OnnxCtcModel, OnnxStreamingCtcModel
 
 
 def _greedy_search_batch(
-    model: torch.nn.Module,
+    model: Union[torch.nn.Module, torch.jit.ScriptModule, OnnxTransducerModel],
     encoder_out: torch.Tensor,
     encoder_out_lens: torch.Tensor,
     blank_penalty: float = 0,
@@ -58,6 +59,8 @@ def _greedy_search_batch(
       Else, return a AsrResults object containing
       decoded result and corresponding timestamps.
     """
+    is_onnx = isinstance(model, OnnxTransducerModel)
+
     assert encoder_out.ndim == 3
     assert encoder_out.size(0) >= 1, encoder_out.size(0)
 
@@ -67,12 +70,17 @@ def _greedy_search_batch(
         batch_first=True,
         enforce_sorted=False,
     )
-
-    device = next(model.parameters()).device
-
-    blank_id = model.decoder.blank_id
-    unk_id = getattr(model, "unk_id", blank_id)
-    context_size = model.decoder.context_size
+    if is_onnx:
+        # ONNX models are always on CPU
+        device = torch.device("cpu")
+        blank_id = getattr(model, "blank_id", 0)  # default blank_id to 0 if not found in meta data
+        unk_id = getattr(model, "unk_id", blank_id)
+        context_size = model.context_size
+    else:
+        device = next(model.parameters()).device
+        blank_id = model.decoder.blank_id
+        unk_id = getattr(model, "unk_id", blank_id)
+        context_size = model.decoder.context_size
 
     batch_size_list = packed_encoder_out.batch_sizes.tolist()
     N = encoder_out.size(0)
@@ -93,29 +101,33 @@ def _greedy_search_batch(
         dtype=torch.int64,
     )  # (N, context_size)
 
-    decoder_out = model.decoder(decoder_input, need_pad=False)
-    decoder_out = model.joiner.decoder_proj(decoder_out)
-    # decoder_out: (N, 1, decoder_out_dim)
-
-    encoder_out = model.joiner.encoder_proj(packed_encoder_out.data)
+    if is_onnx:
+        decoder_out = model.run_decoder(decoder_input)
+        packed_data = packed_encoder_out.data
+    else:
+        decoder_out = model.decoder(decoder_input, need_pad=False)
+        # decoder_out: (N, decoder_out_dim)
+        decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
+        packed_data = model.joiner.encoder_proj(packed_encoder_out.data)
 
     offset = 0
     for t, batch_size in enumerate(batch_size_list):
         start = offset
         end = offset + batch_size
-        current_encoder_out = encoder_out.data[start:end]
-        current_encoder_out = current_encoder_out.unsqueeze(1).unsqueeze(1)
-        # current_encoder_out's shape: (batch_size, 1, 1, encoder_out_dim)
+        current_encoder_out = packed_data[start:end]
+        # current_encoder_out's shape: (batch_size, encoder_out_dim)
         offset = end
 
         decoder_out = decoder_out[:batch_size]
 
-        logits = model.joiner(
-            current_encoder_out, decoder_out.unsqueeze(1), project_input=False
-        )
-        # logits'shape (batch_size, 1, 1, vocab_size)
+        if is_onnx:
+            logits = model.run_joiner(current_encoder_out, decoder_out)
+        else:
+            logits = model.joiner(
+                current_encoder_out, decoder_out, project_input=False
+            )
+            # logits'shape (batch_size, vocab_size)
 
-        logits = logits.squeeze(1).squeeze(1)  # (batch_size, vocab_size)
         assert logits.ndim == 2, logits.shape
 
         if blank_penalty != 0:
@@ -137,8 +149,11 @@ def _greedy_search_batch(
                 device=device,
                 dtype=torch.int64,
             )
-            decoder_out = model.decoder(decoder_input, need_pad=False)
-            decoder_out = model.joiner.decoder_proj(decoder_out)
+            if is_onnx:
+                decoder_out = model.run_decoder(decoder_input)
+            else:
+                decoder_out = model.decoder(decoder_input, need_pad=False)
+                decoder_out = model.joiner.decoder_proj(decoder_out)
 
     sorted_ans = [h[context_size:] for h in hyps]
     ans = []
@@ -161,7 +176,7 @@ def _greedy_search_batch(
 
 
 def greedy_search(
-    model: Union[torch.nn.Module, torch.jit.ScriptModule],
+    model: Union[torch.nn.Module, torch.jit.ScriptModule, OnnxTransducerModel],
     encoder_out: torch.Tensor,
     encoder_out_lens: torch.Tensor,
     max_sym_per_frame: int = 1,

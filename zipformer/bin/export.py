@@ -547,6 +547,8 @@ def _export_decoder_model_onnx(
 ):
     context_size = decoder_model.decoder.context_size
     vocab_size = decoder_model.decoder.vocab_size
+    blank_id = decoder_model.decoder.blank_id
+    unk_id = getattr(decoder_model, "unk_id", blank_id)
 
     y = torch.zeros(10, context_size, dtype=torch.int64)
     decoder_model = torch.jit.script(decoder_model)
@@ -569,6 +571,8 @@ def _export_decoder_model_onnx(
     meta_data = {
         "context_size": str(context_size),
         "vocab_size": str(vocab_size),
+        "blank_id": str(blank_id),
+        "unk_id": str(unk_id)
     }
     add_meta_data(filename=decoder_filename, meta_data=meta_data)
 
@@ -1448,7 +1452,7 @@ def main():
     if params.export_type == "torch":
         export_torch(params, model)
     elif params.export_type == "onnx":
-        convert_scaled_to_non_scaled(model, inplace=True)
+        convert_scaled_to_non_scaled(model, inplace=True, is_onnx=True)
 
         if params.streaming:
             if params.ctc:

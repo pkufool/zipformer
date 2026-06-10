@@ -115,6 +115,7 @@ from zipformer.decode.search import (
     streaming_ctc_greedy_search,
 )
 from zipformer.decode.stream import DecodeStream
+from zipformer.modules.onnx_model import OnnxCtcModel, OnnxStreamingCtcModel, OnnxTransducerModel, OnnxStreamingTransducerModel
 
 # ==============================================================================
 # Argument parsing
@@ -249,28 +250,6 @@ def read_sound_files(
         )
         ans.append(wave[0].contiguous())
     return ans
-
-
-def compute_fbank(waveform: torch.Tensor, sample_rate: int) -> torch.Tensor:
-    """Compute fbank features for a single waveform.
-
-    Args:
-      waveform:
-        A 1-D float32 tensor of audio samples.
-      sample_rate:
-        The sample rate of the audio.
-    Returns:
-      Return a 2-D tensor of shape (num_frames, feature_dim).
-    """
-    feat = torchaudio.compliance.kaldi.fbank(
-        waveform.unsqueeze(0),
-        num_mel_bins=80,
-        sample_frequency=sample_rate,
-        dither=0,
-        snip_edges=False,
-        high_freq=-400,
-    )
-    return feat
 
 
 def get_audio_durations(filenames: List[str]) -> List[float]:
@@ -781,27 +760,20 @@ def infer_jit_streaming_ctc(args) -> List[dict]:
 
 def infer_onnx(args) -> List[dict]:
     """ONNX non-streaming transducer inference."""
-    from torch.nn.utils.rnn import pad_sequence
 
     model = OnnxTransducerModel(
-        args.encoder_model_filename,
-        args.decoder_model_filename,
-        args.joiner_model_filename,
+        args.encoder,
+        args.decoder,
+        args.joiner,
     )
-
-    fbank = create_fbank(args.sample_rate)
-    waves = read_sound_files(args.sound_files, args.sample_rate)
-
-    features = fbank(waves)
-    feature_lengths = [f.size(0) for f in features]
-    features = pad_sequence(features, batch_first=True, padding_value=math.log(1e-10))
-    feature_lengths = torch.tensor(feature_lengths, dtype=torch.int64)
+    features, feature_lengths = extract_features(args)
 
     encoder_out, encoder_out_lens = model.run_encoder(features, feature_lengths)
-    hyps = greedy_search_transducer_batch(model, encoder_out, encoder_out_lens)
+
+    hyps = greedy_search(model, encoder_out, encoder_out_lens)
 
     token_table = SymbolTable.from_file(args.tokens)
-    durations = get_audio_durations(args.sound_files, args.sample_rate)
+    durations = get_audio_durations(args.sound_files)
 
     results = []
     for filename, hyp, dur in zip(args.sound_files, hyps, durations):
@@ -812,7 +784,6 @@ def infer_onnx(args) -> List[dict]:
 
 def infer_onnx_ctc(args) -> List[dict]:
     """ONNX non-streaming CTC inference."""
-    from torch.nn.utils.rnn import pad_sequence
 
     model = OnnxCtcModel(args.nn_model)
 
@@ -827,7 +798,7 @@ def infer_onnx_ctc(args) -> List[dict]:
     log_probs, log_probs_len = model(features, feature_lengths)
 
     token_table = load_token_table(args.tokens)
-    durations = get_audio_durations(args.sound_files, args.sample_rate)
+    durations = get_audio_durations(args.sound_files)
     blank_id = 0
 
     results = []
@@ -855,7 +826,7 @@ def infer_onnx_streaming(args) -> List[dict]:
     )
 
     token_table = SymbolTable.from_file(args.tokens)
-    durations = get_audio_durations(args.sound_files, args.sample_rate)
+    durations = get_audio_durations(args.sound_files)
     sample_rate = args.sample_rate
     results = []
 
@@ -913,7 +884,7 @@ def infer_onnx_streaming_ctc(args) -> List[dict]:
     """ONNX streaming CTC inference."""
     model = OnnxStreamingCtcModel(args.nn_model)
 
-    durations = get_audio_durations(args.sound_files, args.sample_rate)
+    durations = get_audio_durations(args.sound_files)
     sample_rate = args.sample_rate
     results = []
 
@@ -1108,6 +1079,7 @@ def main():
         else:
             results = infer_jit(args)
     elif args.model_type == "onnx":
+        args.device = torch.device("cpu")  # ONNX models run on CPU
         if args.streaming:
             if args.ctc:
                 results = infer_onnx_streaming_ctc(args)

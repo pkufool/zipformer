@@ -375,7 +375,7 @@ def get_parser():
 
 def test_encoder(
     torch_model: torch.jit.ScriptModule,
-    onnx_model: OnnxModel,
+    onnx_model: OnnxTransducerModel,
 ):
     C = 80
     for i in range(3):
@@ -399,7 +399,7 @@ def test_encoder(
 
 def test_decoder(
     torch_model: torch.jit.ScriptModule,
-    onnx_model: OnnxModel,
+    onnx_model: OnnxTransducerModel,
 ):
     context_size = onnx_model.context_size
     vocab_size = onnx_model.vocab_size
@@ -424,7 +424,7 @@ def test_decoder(
 
 def test_joiner(
     torch_model: torch.jit.ScriptModule,
-    onnx_model: OnnxModel,
+    onnx_model: OnnxTransducerModel,
 ):
     encoder_dim = torch_model.joiner.encoder_proj.weight.shape[1]
     decoder_dim = torch_model.joiner.decoder_proj.weight.shape[1]
@@ -454,7 +454,7 @@ def main():
 
     torch_model = torch.jit.load(args.jit_filename)
 
-    onnx_model = OnnxModel(
+    onnx_model = OnnxTransducerModel(
         encoder_model_filename=args.onnx_encoder_filename,
         decoder_model_filename=args.onnx_decoder_filename,
         joiner_model_filename=args.onnx_joiner_filename,
