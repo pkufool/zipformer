@@ -60,7 +60,7 @@ from zipformer.utils import (
     str2bool,
     write_error_stats,
     remove_punctuation,
-    tokenize_by_cjk_char
+    tokenize_by_cjk_char,
 )
 
 
@@ -550,9 +550,7 @@ def main():
         key, path = item.split(",")
         test_sets[key] = path
 
-    feature_extractor = Fbank(
-        sample_rate=params.sample_rate, n_mels=params.feature_dim
-    )
+    feature_extractor = Fbank(sample_rate=params.sample_rate, n_mels=params.feature_dim)
 
     for test_set, manifest in test_sets.items():
         test_dl = ATDataloader(

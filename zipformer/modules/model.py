@@ -146,7 +146,9 @@ class Decoder(torch.nn.Module):
         if self.context_size > 1:
             embedding_out = embedding_out.permute(0, 2, 1)
             if need_pad is True:
-                embedding_out = torch.nn.functional.pad(embedding_out, pad=(self.context_size - 1, 0))
+                embedding_out = torch.nn.functional.pad(
+                    embedding_out, pad=(self.context_size - 1, 0)
+                )
             else:
                 # During inference time, there is no need to do extra padding
                 # as we only need one output
@@ -1080,7 +1082,6 @@ class OnnxStreamingCtcWrapper(torch.nn.Module):
         return states
 
 
-
 # The following classes are used for ONNX inference.
 class OnnxTransducerModel:
     """Non-streaming ONNX transducer model (encoder + decoder + joiner)."""
@@ -1432,6 +1433,7 @@ def get_parser():
     )
 
     return parser
+
 
 def test_encoder(
     torch_model: torch.jit.ScriptModule,

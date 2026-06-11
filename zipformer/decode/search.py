@@ -31,7 +31,12 @@ from zipformer.decode.stream import (
     AsrResults,
     KeywordResult,
 )
-from zipformer.modules.onnx_model import OnnxTransducerModel, OnnxStreamingTransducerModel, OnnxCtcModel, OnnxStreamingCtcModel
+from zipformer.modules.model import (
+    OnnxTransducerModel,
+    OnnxStreamingTransducerModel,
+    OnnxCtcModel,
+    OnnxStreamingCtcModel,
+)
 
 
 def _greedy_search_batch(
@@ -73,7 +78,9 @@ def _greedy_search_batch(
     if is_onnx:
         # ONNX models are always on CPU
         device = torch.device("cpu")
-        blank_id = getattr(model, "blank_id", 0)  # default blank_id to 0 if not found in meta data
+        blank_id = getattr(
+            model, "blank_id", 0
+        )  # default blank_id to 0 if not found in meta data
         unk_id = getattr(model, "unk_id", blank_id)
         context_size = model.context_size
     else:
@@ -123,9 +130,7 @@ def _greedy_search_batch(
         if is_onnx:
             logits = model.run_joiner(current_encoder_out, decoder_out)
         else:
-            logits = model.joiner(
-                current_encoder_out, decoder_out, project_input=False
-            )
+            logits = model.joiner(current_encoder_out, decoder_out, project_input=False)
             # logits'shape (batch_size, vocab_size)
 
         assert logits.ndim == 2, logits.shape
@@ -343,15 +348,15 @@ def _streaming_greedy_search_batch(
     for t in range(T):
         current_encoder_out = encoder_out[:, t, :]  # (N, C)
 
-        decoder_out = torch.cat(
-            [stream.decoder_out for stream in streams], dim=0
-        )
+        decoder_out = torch.cat([stream.decoder_out for stream in streams], dim=0)
 
         if is_onnx:
             logits = model.run_joiner(current_encoder_out, decoder_out)
         else:
             logits = model.joiner(
-                current_encoder_out, decoder_out, project_input=False,
+                current_encoder_out,
+                decoder_out,
+                project_input=False,
             )
 
         assert logits.ndim == 2, logits.shape
@@ -452,15 +457,15 @@ def streaming_greedy_search(
         done = [False] * batch_size
 
         while not all(done):
-            decoder_out = torch.cat(
-                [stream.decoder_out for stream in streams], dim=0
-            )
+            decoder_out = torch.cat([stream.decoder_out for stream in streams], dim=0)
 
             if is_onnx:
                 logits = model.run_joiner(current_encoder_out, decoder_out)
             else:
                 logits = model.joiner(
-                    current_encoder_out, decoder_out, project_input=False,
+                    current_encoder_out,
+                    decoder_out,
+                    project_input=False,
                 )
 
             assert logits.ndim == 2, logits.shape
@@ -1877,7 +1882,6 @@ def keywords_search(
     for i in range(N):
         ans.append(sorted_ans[unsorted_indices[i]])
     return ans
-
 
 
 def greedy_search_transducer_batch(model, encoder_out, encoder_out_lens):

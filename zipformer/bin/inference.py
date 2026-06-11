@@ -114,7 +114,13 @@ from zipformer.decode.search import (
     streaming_ctc_greedy_search,
 )
 from zipformer.decode.stream import DecodeStream
-from zipformer.modules.model import OnnxCtcModel, OnnxStreamingCtcModel, OnnxTransducerModel, OnnxStreamingTransducerModel
+from zipformer.modules.model import (
+    OnnxCtcModel,
+    OnnxStreamingCtcModel,
+    OnnxTransducerModel,
+    OnnxStreamingTransducerModel,
+)
+
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -258,6 +264,7 @@ def get_audio_durations(filenames: List[str]) -> List[float]:
 # ==============================================================================
 # Inference functions
 # ==============================================================================
+
 
 def extract_features(args):
     """Extract Fbank features from input sound files."""
@@ -533,9 +540,7 @@ def infer_jit_streaming(args) -> List[dict]:
                 mode="constant",
                 value=math.log(1e-10),
             )
-        batch_feature_lens = torch.full_like(
-            batch_feature_lens, tail_length
-        )
+        batch_feature_lens = torch.full_like(batch_feature_lens, tail_length)
 
         encoder_out, encoder_out_lens, new_states = model.encoder(
             features=batch_features,
@@ -573,7 +578,11 @@ def infer_jit_streaming(args) -> List[dict]:
         hyp = stream.hyp[context_size:]
         text = token_ids_to_text(hyp, token_table) if hyp else ""
         results.append(
-            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
+            {
+                "filename": args.sound_files[idx],
+                "text": text,
+                "duration": durations[idx],
+            }
         )
 
     return results
@@ -612,7 +621,9 @@ def infer_jit_streaming_ctc(args) -> List[dict]:
     streaming_ctc_greedy_search for decoding. All audio features are extracted
     upfront (non-streaming), then processed chunk-by-chunk with dynamic batching.
     """
-    logging.info(f"Infer JIT streaming CTC with model {args.model} on device {args.device}")
+    logging.info(
+        f"Infer JIT streaming CTC with model {args.model} on device {args.device}"
+    )
     model = torch.jit.load(args.model)
     model.eval()
     model.to(args.device)
@@ -679,9 +690,7 @@ def infer_jit_streaming_ctc(args) -> List[dict]:
                 mode="constant",
                 value=math.log(1e-10),
             )
-        batch_feature_lens = torch.full_like(
-            batch_feature_lens, tail_length
-        )
+        batch_feature_lens = torch.full_like(batch_feature_lens, tail_length)
 
         encoder_out, encoder_out_lens, new_states = model.encoder(
             features=batch_features,
@@ -715,7 +724,11 @@ def infer_jit_streaming_ctc(args) -> List[dict]:
         stream = all_streams[idx]
         text = token_ids_to_text(stream.hyp, token_table) if stream.hyp else ""
         results.append(
-            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
+            {
+                "filename": args.sound_files[idx],
+                "text": text,
+                "duration": durations[idx],
+            }
         )
     return results
 
@@ -832,7 +845,11 @@ def infer_onnx_streaming(args) -> List[dict]:
         hyp = stream.hyp[context_size:]
         text = token_ids_to_text(hyp, token_table) if hyp else ""
         results.append(
-            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
+            {
+                "filename": args.sound_files[idx],
+                "text": text,
+                "duration": durations[idx],
+            }
         )
 
     return results
@@ -904,7 +921,11 @@ def infer_onnx_streaming_ctc(args) -> List[dict]:
 
         text = token_ids_to_text(stream.hyp, token_table) if stream.hyp else ""
         results.append(
-            {"filename": args.sound_files[idx], "text": text, "duration": durations[idx]}
+            {
+                "filename": args.sound_files[idx],
+                "text": text,
+                "duration": durations[idx],
+            }
         )
 
     return results
@@ -1041,7 +1062,6 @@ def main():
     if not args.tokens:
         raise ValueError("--tokens is required when --hf-model is not used.")
 
-        
     device = (
         torch.device("cuda", 0) if torch.cuda.is_available() else torch.device("cpu")
     )

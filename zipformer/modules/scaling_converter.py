@@ -49,12 +49,10 @@ def get_submodule(model, target):
     mod: torch.nn.Module = model
     for item in atoms:
         if not hasattr(mod, item):
-            raise AttributeError(
-                mod._get_name() + " has no " "attribute `" + item + "`"
-            )
+            raise AttributeError(mod._get_name() + " has no attribute `" + item + "`")
         mod = getattr(mod, item)
         if not isinstance(mod, torch.nn.Module):
-            raise AttributeError("`" + item + "` is not " "an nn.Module")
+            raise AttributeError("`" + item + "` is not an nn.Module")
     return mod
 
 

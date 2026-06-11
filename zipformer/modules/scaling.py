@@ -46,6 +46,7 @@ custom_bwd = custom_amp_decorator(custom_bwd, deprecated)
 def torch_compile(fn, *args, **kwargs):
     # Skip torch.compile during ONNX export to avoid tracing issues
     import os
+
     if os.environ.get("K2_ONNX_EXPORT", "0") == "1":
         return fn
     if hasattr(torch, "compile"):
@@ -878,6 +879,7 @@ class BalancerFunction(torch.autograd.Function):
 
         return x_grad, None, None, None, None, None, None
 
+
 # The following functions convert from the way we historically specified
 # these limitations, as limits on the absolute value and the proportion of positive
 # values, to limits on the RMS value and the (mean / stddev).
@@ -969,9 +971,8 @@ class Balancer(torch.nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if torch.jit.is_scripting() or torch.jit.is_tracing():
             return _no_op(x)
-        if (
-            not x.requires_grad
-            or (x.is_cuda and self.mem_cutoff(torch.cuda.memory_allocated()))
+        if not x.requires_grad or (
+            x.is_cuda and self.mem_cutoff(torch.cuda.memory_allocated())
         ):
             return _no_op(x)
 

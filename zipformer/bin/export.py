@@ -134,7 +134,9 @@ from zipformer.utils import (
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
-    str2bool, SymbolTable, num_tokens
+    str2bool,
+    SymbolTable,
+    num_tokens,
 )
 
 from zipformer.modules.model import (
@@ -145,7 +147,7 @@ from zipformer.modules.model import (
     OnnxJoinerWrapper,
     OnnxCtcWrapper,
     OnnxStreamingEncoderWrapper,
-    OnnxStreamingCtcWrapper
+    OnnxStreamingCtcWrapper,
 )
 
 
@@ -310,6 +312,7 @@ def export_torch(params, model):
 # Shared ONNX utilities
 # ==============================================================================
 
+
 def add_meta_data(
     filename: str, meta_data: Dict[str, str], use_external_data: bool = False
 ):
@@ -410,7 +413,7 @@ def _export_decoder_model_onnx(
         "context_size": str(context_size),
         "vocab_size": str(vocab_size),
         "blank_id": str(blank_id),
-        "unk_id": str(unk_id)
+        "unk_id": str(unk_id),
     }
     add_meta_data(filename=decoder_filename, meta_data=meta_data)
 
@@ -523,6 +526,7 @@ def export_onnx_transducer(params, model):
 # ONNX Non-streaming CTC
 # ==============================================================================
 
+
 def _export_ctc_model_onnx(model, filename, opset_version=11):
     x = torch.zeros(1, 100, 80, dtype=torch.float32)
     x_lens = torch.tensor([100], dtype=torch.int64)
@@ -591,6 +595,7 @@ def export_onnx_ctc(params, model):
 # ==============================================================================
 # ONNX Streaming Transducer
 # ==============================================================================
+
 
 def build_streaming_inputs_outputs(
     tensors, i, inputs, outputs, input_names, output_names
@@ -686,7 +691,9 @@ def export_streaming_encoder_onnx(
     opset_version: int = 11,
 ):
     """Shared logic for exporting streaming encoder (transducer or CTC) to ONNX."""
-    encoder_model.encoder.__class__.forward = encoder_model.encoder.__class__.streaming_forward
+    encoder_model.encoder.__class__.forward = (
+        encoder_model.encoder.__class__.streaming_forward
+    )
 
     T = encoder_model.chunk_size * 2 + encoder_model.pad_length
     x = torch.rand(1, T, feature_dim, dtype=torch.float32)
@@ -877,7 +884,7 @@ def export_onnx_streaming_transducer(params, model):
 # ==============================================================================
 def export_onnx_streaming_ctc(params, model):
     """Export streaming CTC model to ONNX."""
-    
+
     ctc_model = OnnxStreamingCtcWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,

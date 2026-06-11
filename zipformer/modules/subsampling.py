@@ -33,6 +33,8 @@ from zipformer.modules.scaling import (
     SwooshR,
     Whiten,
 )
+
+
 class ConvNeXt(torch.nn.Module):
     """
     Our interpretation of the ConvNeXt module as used in https://arxiv.org/pdf/2206.14747.pdf
