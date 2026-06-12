@@ -29,68 +29,68 @@ Usage examples:
 
 (1) JIT non-streaming transducer:
 
-  python inference.py \\
-    --model-type jit \\
-    --nn-model-filename ./exp/jit_script.pt \\
-    --tokens ./data/lang_bpe_500/tokens.txt \\
+  python inference.py \
+    --model-type jit \
+    --nn-model-filename ./exp/jit_script.pt \
+    --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
 (2) JIT streaming transducer:
 
-  python inference.py \\
-    --model-type jit --streaming true \\
-    --nn-model-filename ./exp/jit_script_chunk_16_left_128.pt \\
-    --tokens ./data/lang_bpe_500/tokens.txt \\
+  python inference.py \
+    --model-type jit --streaming true \
+    --nn-model-filename ./exp/jit_script_chunk_16_left_128.pt \
+    --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
 (3) ONNX non-streaming transducer:
 
-  python inference.py \\
-    --model-type onnx \\
-    --encoder-model-filename ./exp/encoder.onnx \\
-    --decoder-model-filename ./exp/decoder.onnx \\
-    --joiner-model-filename ./exp/joiner.onnx \\
-    --tokens ./data/lang_bpe_500/tokens.txt \\
+  python inference.py \
+    --model-type onnx \
+    --encoder-model-filename ./exp/encoder.onnx \
+    --decoder-model-filename ./exp/decoder.onnx \
+    --joiner-model-filename ./exp/joiner.onnx \
+    --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
 (4) ONNX non-streaming CTC:
 
-  python inference.py \\
-    --model-type onnx --ctc true \\
-    --nn-model ./exp/model.onnx \\
-    --tokens ./data/lang_bpe_500/tokens.txt \\
+  python inference.py \
+    --model-type onnx --ctc true \
+    --nn-model ./exp/model.onnx \
+    --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
 (5) ONNX streaming transducer:
 
-  python inference.py \\
-    --model-type onnx --streaming true \\
-    --encoder-model-filename ./exp/encoder-streaming.onnx \\
-    --decoder-model-filename ./exp/decoder-streaming.onnx \\
-    --joiner-model-filename ./exp/joiner-streaming.onnx \\
-    --tokens ./data/lang_bpe_500/tokens.txt \\
+  python inference.py \
+    --model-type onnx --streaming true \
+    --encoder-model-filename ./exp/encoder-streaming.onnx \
+    --decoder-model-filename ./exp/decoder-streaming.onnx \
+    --joiner-model-filename ./exp/joiner-streaming.onnx \
+    --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
 (6) ONNX streaming CTC:
 
-  python inference.py \\
-    --model-type onnx --streaming true --ctc true \\
-    --nn-model ./exp/ctc-streaming.onnx \\
-    --tokens ./data/lang_bpe_500/tokens.txt \\
+  python inference.py \
+    --model-type onnx --streaming true --ctc true \
+    --nn-model ./exp/ctc-streaming.onnx \
+    --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
 (7) Download model from HuggingFace (JIT):
 
-  python inference.py \\
-    --model-type jit \\
-    --hf-model ks-fsa/zipformer-medium-v1 \\
+  python inference.py \
+    --model-type jit \
+    --hf-model ks-fsa/zipformer-medium-v1 \
     /path/to/foo.wav /path/to/bar.wav
 
 (8) Download model from HuggingFace (ONNX transducer):
 
-  python inference.py \\
-    --model-type onnx \\
-    --hf-model ks-fsa/zipformer-medium-v1 \\
+  python inference.py \
+    --model-type onnx \
+    --hf-model ks-fsa/zipformer-medium-v1 \
     /path/to/foo.wav /path/to/bar.wav
 """
 
@@ -99,12 +99,10 @@ import logging
 import math
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List
 
-import numpy as np
 import torch
 import torchaudio
-from torch.nn.utils.rnn import pad_sequence
 
 from zipformer.utils import str2bool, SymbolTable, AttributeDict, token_ids_to_text
 from zipformer.decode.search import (
@@ -130,10 +128,8 @@ def get_parser():
     parser.add_argument(
         "--model-type",
         type=str,
-        required=True,
-        choices=["checkpoint", "jit", "onnx"],
-        default="checkpoint",
-        help="Model format: 'checkpoint' for PyTorch checkpoint, 'jit' for TorchScript, 'onnx' for ONNX.",
+        choices=["jit", "onnx"],
+        help="Model format: 'jit' for TorchScript, 'onnx' for ONNX.",
     )
 
     parser.add_argument(
@@ -150,12 +146,12 @@ def get_parser():
         help="Whether to use CTC head (instead of transducer).",
     )
 
-    # JIT model path
+    # model path for JIT models and ONNX CTC models
     parser.add_argument(
         "--model",
         type=str,
         default="",
-        help="Path to the TorchScript model (for --model-type jit).",
+        help="Path to the TorchScript model (for --model-type jit) or ONNX CTC model (for --model-type onnx, CTC).",
     )
 
     # ONNX transducer model paths
@@ -184,15 +180,14 @@ def get_parser():
         "--tokens",
         type=str,
         default="",
-        help="Path to tokens.txt. If not provided and --hf-model is set, "
-        "defaults to data/lang_bpe_500/tokens.txt inside the repo.",
+        help="Path to tokens.txt.",
     )
 
     parser.add_argument(
         "--hf-model",
         type=str,
         default="",
-        help="HuggingFace repo ID, e.g., 'ks-fsa/zipformer-medium-v1'. "
+        help="HuggingFace repo ID, e.g., 'pkufool/zipformer-large-ctc'. "
         "If specified, the model and tokens will be downloaded from "
         "HuggingFace automatically.",
     )
@@ -245,9 +240,8 @@ def read_sound_files(
     ans = []
     for f in filenames:
         wave, sample_rate = torchaudio.load(f)
-        assert sample_rate == expected_sample_rate, (
-            f"expected sample rate: {expected_sample_rate}. Given: {sample_rate}"
-        )
+        if sample_rate != expected_sample_rate:
+            wave = torchaudio.transforms.Resample(orig_freq=sample_rate, new_freq=expected_sample_rate)(wave)
         ans.append(wave[0].contiguous())
     return ans
 
@@ -284,7 +278,7 @@ def extract_features(args):
         features.append(feat.to(args.device))
     feature_lengths = [f.size(0) for f in features]
 
-    features = pad_sequence(
+    features = torch.nn.utils.rnn.pad_sequence(
         features,
         batch_first=True,
         padding_value=math.log(1e-10),
@@ -525,7 +519,7 @@ def infer_jit_streaming(args) -> List[dict]:
         batch_feature_lens = torch.tensor(
             batch_feature_lens, dtype=torch.int32, device=args.device
         )
-        batch_features = pad_sequence(
+        batch_features = torch.nn.utils.rnn.pad_sequence(
             batch_features,
             batch_first=True,
             padding_value=math.log(1e-10),
@@ -542,7 +536,7 @@ def infer_jit_streaming(args) -> List[dict]:
             )
         batch_feature_lens = torch.full_like(batch_feature_lens, tail_length)
 
-        encoder_out, encoder_out_lens, new_states = model.encoder(
+        encoder_out, _, new_states = model.encoder(
             features=batch_features,
             feature_lengths=batch_feature_lens,
             states=batch_states,
@@ -584,7 +578,6 @@ def infer_jit_streaming(args) -> List[dict]:
                 "duration": durations[idx],
             }
         )
-
     return results
 
 
@@ -621,9 +614,6 @@ def infer_jit_streaming_ctc(args) -> List[dict]:
     streaming_ctc_greedy_search for decoding. All audio features are extracted
     upfront (non-streaming), then processed chunk-by-chunk with dynamic batching.
     """
-    logging.info(
-        f"Infer JIT streaming CTC with model {args.model} on device {args.device}"
-    )
     model = torch.jit.load(args.model)
     model.eval()
     model.to(args.device)
@@ -677,7 +667,7 @@ def infer_jit_streaming_ctc(args) -> List[dict]:
         batch_feature_lens = torch.tensor(
             batch_feature_lens, dtype=torch.int32, device=args.device
         )
-        batch_features = pad_sequence(
+        batch_features = torch.nn.utils.rnn.pad_sequence(
             batch_features,
             batch_first=True,
             padding_value=math.log(1e-10),
@@ -811,7 +801,6 @@ def infer_onnx_streaming(args) -> List[dict]:
     results = []
     for idx in range(len(args.sound_files)):
         model.reset_states()
-
         stream = DecodeStream(
             params=params,
             utt_id=args.sound_files[idx],
@@ -851,7 +840,6 @@ def infer_onnx_streaming(args) -> List[dict]:
                 "duration": durations[idx],
             }
         )
-
     return results
 
 

@@ -17,13 +17,14 @@
 # limitations under the License.
 
 import warnings
+
+from multiprocessing.pool import Pool
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+
 from zipformer.decode.context_graph import ContextGraph
 from zipformer.decode.ngram_lm import NgramLm, NgramLmStateCost
-
-from multiprocessing.pool import Pool
 from zipformer.decode.stream import (
     DecodeStream,
     Hypothesis,
@@ -158,7 +159,7 @@ def _greedy_search_batch(
                 decoder_out = model.run_decoder(decoder_input)
             else:
                 decoder_out = model.decoder(decoder_input, need_pad=False)
-                decoder_out = model.joiner.decoder_proj(decoder_out)
+                decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
 
     sorted_ans = [h[context_size:] for h in hyps]
     ans = []
@@ -342,7 +343,7 @@ def _streaming_greedy_search_batch(
                 stream.decoder_out = model.run_decoder(decoder_input)
             else:
                 decoder_out = model.decoder(decoder_input, need_pad=False)
-                decoder_out = model.joiner.decoder_proj(decoder_out)
+                decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
                 stream.decoder_out = decoder_out
 
     for t in range(T):
@@ -380,7 +381,7 @@ def _streaming_greedy_search_batch(
                         decoder_input,
                         need_pad=False,
                     )
-                    decoder_out = model.joiner.decoder_proj(decoder_out)
+                    decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
                     streams[i].decoder_out = decoder_out
 
 
@@ -1882,80 +1883,3 @@ def keywords_search(
     for i in range(N):
         ans.append(sorted_ans[unsorted_indices[i]])
     return ans
-
-
-def greedy_search_transducer_batch(model, encoder_out, encoder_out_lens):
-    """Batch greedy search for non-streaming transducer (ONNX)."""
-    assert encoder_out.ndim == 3
-
-    packed = torch.nn.utils.rnn.pack_padded_sequence(
-        input=encoder_out,
-        lengths=encoder_out_lens.cpu(),
-        batch_first=True,
-        enforce_sorted=False,
-    )
-
-    blank_id = 0
-    N = encoder_out.size(0)
-    context_size = model.context_size
-    hyps = [[blank_id] * context_size for _ in range(N)]
-
-    decoder_input = torch.tensor(hyps, dtype=torch.int64)
-    decoder_out = model.run_decoder(decoder_input)
-
-    offset = 0
-    for batch_size in packed.batch_sizes.tolist():
-        start = offset
-        end = offset + batch_size
-        current_encoder_out = packed.data[start:end]
-        offset = end
-
-        decoder_out = decoder_out[:batch_size]
-        logits = model.run_joiner(current_encoder_out, decoder_out)
-
-        y = logits.argmax(dim=1).tolist()
-        emitted = False
-        for i, v in enumerate(y):
-            if v != blank_id:
-                hyps[i].append(v)
-                emitted = True
-        if emitted:
-            decoder_input = [h[-context_size:] for h in hyps[:batch_size]]
-            decoder_input = torch.tensor(decoder_input, dtype=torch.int64)
-            decoder_out = model.run_decoder(decoder_input)
-
-    sorted_ans = [h[context_size:] for h in hyps]
-    ans = []
-    unsorted_indices = packed.unsorted_indices.tolist()
-    for i in range(N):
-        ans.append(sorted_ans[unsorted_indices[i]])
-    return ans
-
-
-def greedy_search_transducer_streaming_onnx(
-    model,
-    encoder_out,
-    context_size,
-    decoder_out=None,
-    hyp=None,
-):
-    """Streaming greedy search for ONNX transducer. Processes one chunk."""
-    blank_id = 0
-
-    if decoder_out is None:
-        hyp = [blank_id] * context_size
-        decoder_input = torch.tensor([hyp], dtype=torch.int64)
-        decoder_out = model.run_decoder(decoder_input)
-
-    encoder_out = encoder_out.squeeze(0)
-    T = encoder_out.size(0)
-    for t in range(T):
-        cur_encoder_out = encoder_out[t : t + 1]
-        joiner_out = model.run_joiner(cur_encoder_out, decoder_out).squeeze(0)
-        y = joiner_out.argmax(dim=0).item()
-        if y != blank_id:
-            hyp.append(y)
-            decoder_input = torch.tensor([hyp[-context_size:]], dtype=torch.int64)
-            decoder_out = model.run_decoder(decoder_input)
-
-    return hyp, decoder_out
