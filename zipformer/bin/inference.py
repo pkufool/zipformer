@@ -31,7 +31,7 @@ Usage examples:
 
   python inference.py \
     --model-type jit \
-    --nn-model-filename ./exp/jit_script.pt \
+    --model ./exp/jit_model.pt \
     --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
@@ -39,7 +39,7 @@ Usage examples:
 
   python inference.py \
     --model-type jit --streaming true \
-    --nn-model-filename ./exp/jit_script_chunk_16_left_128.pt \
+    --model ./exp/jit_script_chunk_16_left_128.pt \
     --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
@@ -47,9 +47,9 @@ Usage examples:
 
   python inference.py \
     --model-type onnx \
-    --encoder-model-filename ./exp/encoder.onnx \
-    --decoder-model-filename ./exp/decoder.onnx \
-    --joiner-model-filename ./exp/joiner.onnx \
+    --encoder ./exp/encoder.onnx \
+    --decoder ./exp/decoder.onnx \
+    --joiner ./exp/joiner.onnx \
     --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
@@ -57,7 +57,7 @@ Usage examples:
 
   python inference.py \
     --model-type onnx --ctc true \
-    --nn-model ./exp/model.onnx \
+    --model ./exp/model.onnx \
     --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
@@ -65,9 +65,9 @@ Usage examples:
 
   python inference.py \
     --model-type onnx --streaming true \
-    --encoder-model-filename ./exp/encoder-streaming.onnx \
-    --decoder-model-filename ./exp/decoder-streaming.onnx \
-    --joiner-model-filename ./exp/joiner-streaming.onnx \
+    --encoder ./exp/encoder-streaming.onnx \
+    --decoder ./exp/decoder-streaming.onnx \
+    --joiner ./exp/joiner-streaming.onnx \
     --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
@@ -75,7 +75,7 @@ Usage examples:
 
   python inference.py \
     --model-type onnx --streaming true --ctc true \
-    --nn-model ./exp/ctc-streaming.onnx \
+    --model ./exp/ctc-streaming.onnx \
     --tokens ./data/lang_bpe_500/tokens.txt \
     /path/to/foo.wav /path/to/bar.wav
 
@@ -83,14 +83,14 @@ Usage examples:
 
   python inference.py \
     --model-type jit \
-    --hf-model ks-fsa/zipformer-medium-v1 \
+    --hf-model pkufool/zipformer-medium \
     /path/to/foo.wav /path/to/bar.wav
 
 (8) Download model from HuggingFace (ONNX transducer):
 
   python inference.py \
     --model-type onnx \
-    --hf-model ks-fsa/zipformer-medium-v1 \
+    --hf-model pkufool/zipformer-medium \
     /path/to/foo.wav /path/to/bar.wav
 """
 
@@ -133,10 +133,45 @@ def get_parser():
     )
 
     parser.add_argument(
+        "--dtype",
+        type=str,
+        choices=["fp32", "fp16", "int8"],
+        default="fp32",
+        help="""
+        Data type for the model: 'float32', 'float16', or 'int8'. Only used when
+        --ms-model or --hf-model is specified to determine which model file to download.
+        For --model-type jit or onnx with user-provided model files, the data type is
+        determined by the model file itself and this argument is ignored.
+        """
+    )
+
+    parser.add_argument(
         "--streaming",
         type=str2bool,
         default=False,
         help="Whether to use streaming inference.",
+    )
+
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=32,
+        help="""
+        Chunk size for streaming inference. Only used when --ms-model or --hf-model is specified,
+        to determine which model file to download. Ignored if --model-type is jit or onnx with
+        user-provided model files.
+        """,
+    )
+
+    parser.add_argument(
+        "--left-context-frames",
+        type=int,
+        default=128,
+        help="""
+        Number of left context frames for streaming inference (after encoder embedding).
+        Only used when --ms-model or --hf-model is specified, to determine which model file to download.
+        Ignored if --model-type is jit or onnx with user-provided model files.
+        """,
     )
 
     parser.add_argument(
@@ -187,9 +222,18 @@ def get_parser():
         "--hf-model",
         type=str,
         default="",
-        help="HuggingFace repo ID, e.g., 'pkufool/zipformer-large-ctc'. "
+        help="HuggingFace repo ID, e.g., 'pkufool/zipformer-large'. "
         "If specified, the model and tokens will be downloaded from "
         "HuggingFace automatically.",
+    )
+
+    parser.add_argument(
+        "--ms-model",
+        type=str,
+        default="",
+        help="ModelScope repo ID, e.g., 'pkufool/zipformer-large'. "
+        "If specified, the model and tokens will be downloaded from "
+        "ModelScope automatically.",
     )
 
     parser.add_argument(
@@ -209,23 +253,6 @@ def get_parser():
     )
 
     return parser
-
-
-# ==============================================================================
-# HuggingFace model download
-# ==============================================================================
-
-
-def download_hf_model(repo_id: str) -> Path:
-    """Download a HuggingFace model repo using huggingface_hub.
-
-    Returns the local cache directory path where the repo is downloaded.
-    """
-    from huggingface_hub import snapshot_download
-
-    local_dir = snapshot_download(repo_id=repo_id)
-    logging.info(f"Downloaded HuggingFace model '{repo_id}' to {local_dir}")
-    return Path(local_dir)
 
 
 # ==============================================================================
@@ -943,6 +970,17 @@ def print_results(results: List[dict], elapsed: float):
 # ==============================================================================
 # Main
 # ==============================================================================
+
+def download_hf_model(repo_id: str) -> Path:
+    """Download a HuggingFace model repo using huggingface_hub.
+
+    Returns the local cache directory path where the repo is downloaded.
+    """
+    from huggingface_hub import snapshot_download
+
+    local_dir = snapshot_download(repo_id=repo_id)
+    logging.info(f"Downloaded HuggingFace model '{repo_id}' to {local_dir}")
+    return Path(local_dir)
 
 
 def _resolve_hf_model_paths(args, hf_dir: Path):

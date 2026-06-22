@@ -8,7 +8,7 @@ site_dir: 'site/zh'
 repo_name: pkufool/zipformer
 repo_url: https://github.com/pkufool/zipformer
 
-copyright: Copyright &copy; 2019 - 2026 新一代 Kaldi 团队 (小米集团)
+copyright: Copyright &copy; 2019 - 2026 新一代 Kaldi 团队 (小米 AI Lab)
 
 theme:
   name: material

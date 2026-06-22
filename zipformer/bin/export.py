@@ -187,7 +187,7 @@ def export_torch(params, model):
     """Export model as PyTorch state_dict and TorchScript."""
 
     logging.info("Exporting model.state_dict()")
-    filename = params.exp_dir / "model.pt"
+    filename = params.exp_dir / f"model-{params.suffix}.pt"
     torch.save({"model": model.state_dict()}, str(filename))
     logging.info(f"Saved to {filename}")
 
@@ -196,12 +196,10 @@ def export_torch(params, model):
 
         if params.causal:
             model.encoder = StreamingEncoderWrapper(model.encoder, model.encoder_embed)
-            chunk_size = model.encoder.chunk_size
-            left_context_len = model.encoder.left_context_len
-            filename = f"jit_model_chunk_{chunk_size}_left_{left_context_len}.pt"
+            filename = f"jit_model-{params.suffix}.pt"
         else:
             model.encoder = EncoderWrapper(model.encoder, model.encoder_embed)
-            filename = "jit_model.pt"
+            filename = f"jit_model-{params.suffix}.pt"
 
         logging.info("Export jit script model")
         model = torch.jit.script(model)
@@ -371,43 +369,37 @@ def export_onnx_transducer(params, model):
     logging.info(f"Joiner parameters: {joiner_num_param}")
     logging.info(f"Total parameters: {total_num_param}")
 
-    if params.iter > 0:
-        suffix = f"iter-{params.iter}"
-    else:
-        suffix = f"epoch-{params.epoch}"
-    suffix += f"-avg-{params.avg}"
-
     opset_version = 13
 
     logging.info("Exporting encoder")
-    encoder_filename = params.exp_dir / f"encoder-{suffix}.onnx"
+    encoder_filename = params.exp_dir / f"encoder-{params.suffix}.onnx"
     _export_encoder_model_onnx(encoder, encoder_filename, opset_version=opset_version)
     logging.info(f"Exported encoder to {encoder_filename}")
 
     logging.info("Exporting decoder")
-    decoder_filename = params.exp_dir / f"decoder-{suffix}.onnx"
+    decoder_filename = params.exp_dir / f"decoder-{params.suffix}.onnx"
     _export_decoder_model_onnx(decoder, decoder_filename, opset_version=opset_version)
     logging.info(f"Exported decoder to {decoder_filename}")
 
     logging.info("Exporting joiner")
-    joiner_filename = params.exp_dir / f"joiner-{suffix}.onnx"
+    joiner_filename = params.exp_dir / f"joiner-{params.suffix}.onnx"
     _export_joiner_model_onnx(joiner, joiner_filename, opset_version=opset_version)
     logging.info(f"Exported joiner to {joiner_filename}")
 
     if params.export_fp16:
         logging.info("Exporting fp16 models")
-        encoder_filename_fp16 = params.exp_dir / f"encoder-{suffix}.fp16.onnx"
+        encoder_filename_fp16 = params.exp_dir / f"encoder-{params.suffix}.fp16.onnx"
         export_onnx_fp16(encoder_filename, encoder_filename_fp16)
         # export decoder in fp16 have some issues, disable it for now.
-        # decoder_filename_fp16 = params.exp_dir / f"decoder-{suffix}.fp16.onnx"
-        # export_onnx_fp16(decoder_filename, decoder_filename_fp16)
-        joiner_filename_fp16 = params.exp_dir / f"joiner-{suffix}.fp16.onnx"
+        decoder_filename_fp16 = params.exp_dir / f"decoder-{params.suffix}.fp16.onnx"
+        export_onnx_fp16(decoder_filename, decoder_filename_fp16)
+        joiner_filename_fp16 = params.exp_dir / f"joiner-{params.suffix}.fp16.onnx"
         export_onnx_fp16(joiner_filename, joiner_filename_fp16)
 
     if params.enable_int8_quantization:
         logging.info("Exporting int8 quantization models")
 
-        encoder_filename_int8 = params.exp_dir / f"encoder-{suffix}.int8.onnx"
+        encoder_filename_int8 = params.exp_dir / f"encoder-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=encoder_filename,
             model_output=encoder_filename_int8,
@@ -417,7 +409,7 @@ def export_onnx_transducer(params, model):
 
         # We don't quantize the decoder since it may cause large accuracy drop.
 
-        joiner_filename_int8 = params.exp_dir / f"joiner-{suffix}.int8.onnx"
+        joiner_filename_int8 = params.exp_dir / f"joiner-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=joiner_filename,
             model_output=joiner_filename_int8,
@@ -477,25 +469,25 @@ def export_onnx_ctc(params, model):
     opset_version = 13
 
     logging.info("Exporting CTC model")
-    filename = params.exp_dir / "ctc.onnx"
+    filename = params.exp_dir / f"ctc-{params.suffix}.onnx"
     _export_ctc_model_onnx(ctc_model, filename, opset_version=opset_version)
     logging.info(f"Exported to {filename}")
 
+    if params.export_fp16:
+        logging.info("Exporting fp16 models")
+        filename_fp16 = params.exp_dir / f"ctc-{params.suffix}.fp16.onnx"
+        export_onnx_fp16(filename, filename_fp16)
+
     # We have observed large accuracy drop after int8 quantization for CTC models, so we disable it for now.
-    if False and params.enable_int8_quantization:
+    if params.enable_int8_quantization:
         logging.info("Exporting int8 quantization models")
-        filename_int8 = params.exp_dir / "ctc.int8.onnx"
+        filename_int8 = params.exp_dir / f"ctc-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=filename,
             model_output=filename_int8,
             op_types_to_quantize=["MatMul"],
             weight_type=QuantType.QInt8,
         )
-
-    if params.export_fp16:
-        logging.info("Exporting fp16 models")
-        filename_fp16 = params.exp_dir / "ctc.fp16.onnx"
-        export_onnx_fp16(filename, filename_fp16)
 
 
 # ==============================================================================
@@ -693,14 +685,6 @@ def export_onnx_streaming_transducer(params, model):
     logging.info(f"Joiner parameters: {joiner_num_param}")
     logging.info(f"Total parameters: {total_num_param}")
 
-    if params.iter > 0:
-        suffix = f"iter-{params.iter}"
-    else:
-        suffix = f"epoch-{params.epoch}"
-    suffix += f"-avg-{params.avg}"
-    suffix += f"-chunk-{params.chunk_size}"
-    suffix += f"-left-{params.left_context_frames}"
-
     opset_version = 13
     dynamic_batch = params.dynamic_batch
 
@@ -712,9 +696,9 @@ def export_onnx_streaming_transducer(params, model):
 
     logging.info("Exporting encoder")
     if params.use_external_data:
-        encoder_filename = f"encoder-{suffix}.onnx"
+        encoder_filename = f"encoder-{params.suffix}.onnx"
     else:
-        encoder_filename = params.exp_dir / f"encoder-{suffix}.onnx"
+        encoder_filename = params.exp_dir / f"encoder-{params.suffix}.onnx"
 
     export_streaming_encoder_onnx(
         encoder,
@@ -729,7 +713,7 @@ def export_onnx_streaming_transducer(params, model):
     logging.info(f"Exported encoder to {encoder_filename}")
 
     logging.info("Exporting decoder")
-    decoder_filename = params.exp_dir / f"decoder-{suffix}.onnx"
+    decoder_filename = params.exp_dir / f"decoder-{params.suffix}.onnx"
     _export_decoder_model_onnx(
         decoder,
         decoder_filename,
@@ -739,7 +723,7 @@ def export_onnx_streaming_transducer(params, model):
     logging.info(f"Exported decoder to {decoder_filename}")
 
     logging.info("Exporting joiner")
-    joiner_filename = params.exp_dir / f"joiner-{suffix}.onnx"
+    joiner_filename = params.exp_dir / f"joiner-{params.suffix}.onnx"
     _export_joiner_model_onnx(
         joiner,
         joiner_filename,
@@ -751,23 +735,23 @@ def export_onnx_streaming_transducer(params, model):
     if params.export_fp16:
         logging.info("Exporting fp16 models")
         if params.use_external_data:
-            encoder_filename_fp16 = f"encoder-{suffix}.fp16.onnx"
+            encoder_filename_fp16 = f"encoder-{params.suffix}.fp16.onnx"
             export_onnx_fp16_large_2gb(encoder_filename, encoder_filename_fp16)
         else:
-            encoder_filename_fp16 = params.exp_dir / f"encoder-{suffix}.fp16.onnx"
+            encoder_filename_fp16 = params.exp_dir / f"encoder-{params.suffix}.fp16.onnx"
             export_onnx_fp16(encoder_filename, encoder_filename_fp16)
-        decoder_filename_fp16 = params.exp_dir / f"decoder-{suffix}.fp16.onnx"
+        decoder_filename_fp16 = params.exp_dir / f"decoder-{params.suffix}.fp16.onnx"
         export_onnx_fp16(decoder_filename, decoder_filename_fp16)
-        joiner_filename_fp16 = params.exp_dir / f"joiner-{suffix}.fp16.onnx"
+        joiner_filename_fp16 = params.exp_dir / f"joiner-{params.suffix}.fp16.onnx"
         export_onnx_fp16(joiner_filename, joiner_filename_fp16)
 
     if params.enable_int8_quantization:
         logging.info("Exporting int8 quantization models")
 
         if params.use_external_data:
-            encoder_filename_int8 = f"encoder-{suffix}.int8.onnx"
+            encoder_filename_int8 = f"encoder-{params.suffix}.int8.onnx"
         else:
-            encoder_filename_int8 = params.exp_dir / f"encoder-{suffix}.int8.onnx"
+            encoder_filename_int8 = params.exp_dir / f"encoder-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=encoder_filename,
             model_output=encoder_filename_int8,
@@ -777,7 +761,7 @@ def export_onnx_streaming_transducer(params, model):
 
         # We don't quantize the decoder since it may cause large accuracy drop.
 
-        joiner_filename_int8 = params.exp_dir / f"joiner-{suffix}.int8.onnx"
+        joiner_filename_int8 = params.exp_dir / f"joiner-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=joiner_filename,
             model_output=joiner_filename_int8,
@@ -802,14 +786,6 @@ def export_onnx_streaming_ctc(params, model):
     total_num_param = sum([p.numel() for p in ctc_model.parameters()])
     logging.info(f"Total parameters: {total_num_param}")
 
-    if params.iter > 0:
-        suffix = f"iter-{params.iter}"
-    else:
-        suffix = f"epoch-{params.epoch}"
-    suffix += f"-avg-{params.avg}"
-    suffix += f"-chunk-{params.chunk_size}"
-    suffix += f"-left-{params.left_context_frames}"
-
     opset_version = 13
     dynamic_batch = params.dynamic_batch
 
@@ -820,9 +796,9 @@ def export_onnx_streaming_ctc(params, model):
     logging.info(f"meta_data: {meta_data}")
 
     if params.use_external_data:
-        model_filename = f"ctc-{suffix}.onnx"
+        model_filename = f"ctc-{params.suffix}.onnx"
     else:
-        model_filename = params.exp_dir / f"ctc-{suffix}.onnx"
+        model_filename = params.exp_dir / f"ctc-{params.suffix}.onnx"
 
     export_streaming_encoder_onnx(
         ctc_model,
@@ -840,9 +816,9 @@ def export_onnx_streaming_ctc(params, model):
         logging.info("Exporting int8 quantization models")
 
         if params.use_external_data:
-            model_filename_int8 = f"ctc-{suffix}.int8.onnx"
+            model_filename_int8 = f"ctc-{params.suffix}.int8.onnx"
         else:
-            model_filename_int8 = params.exp_dir / f"ctc-{suffix}.int8.onnx"
+            model_filename_int8 = params.exp_dir / f"ctc-{params.suffix}.int8.onnx"
 
         quantize_dynamic(
             model_input=model_filename,
@@ -854,10 +830,10 @@ def export_onnx_streaming_ctc(params, model):
     if params.export_fp16:
         logging.info("Exporting fp16 models")
         if params.use_external_data:
-            model_filename_fp16 = f"ctc-{suffix}.fp16.onnx"
+            model_filename_fp16 = f"ctc-{params.suffix}.fp16.onnx"
             export_onnx_fp16_large_2gb(model_filename, model_filename_fp16)
         else:
-            model_filename_fp16 = params.exp_dir / f"ctc-{suffix}.fp16.onnx"
+            model_filename_fp16 = params.exp_dir / f"ctc-{params.suffix}.fp16.onnx"
             export_onnx_fp16(model_filename, model_filename_fp16)
 
 
@@ -980,6 +956,16 @@ def main():
         raise ValueError(
             "Either --bpe-model or --tokens must be provided and point to a valid file."
         )
+
+    if params.iter > 0:
+        suffix = f"iter-{params.iter}"
+    else:
+        suffix = f"epoch-{params.epoch}"
+    suffix += f"-avg-{params.avg}"
+    if params.causal:
+        suffix += f"-chunk-{params.chunk_size}"
+        suffix += f"-left-{params.left_context_frames}"
+    params.suffix = suffix
 
     logging.info(params)
 
