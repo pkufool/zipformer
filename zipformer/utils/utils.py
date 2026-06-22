@@ -497,6 +497,151 @@ def make_pad_mask(
     return expanded_lengths >= lengths.unsqueeze(-1)
 
 
+def stack_states(state_list: List[List[torch.Tensor]]) -> List[torch.Tensor]:
+    """Stack list of zipformer states that correspond to separate utterances
+    into a single emformer state, so that it can be used as an input for
+    zipformer when those utterances are formed into a batch.
+
+    Args:
+      state_list:
+        Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance. For element-n,
+        state_list[n] is a list of cached tensors of all encoder layers. For layer-i,
+        state_list[n][i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1,
+        cached_val2, cached_conv1, cached_conv2).
+        state_list[n][-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+        state_list[n][-1] is processed_lens of shape (batch,), which records the number
+        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Note:
+      It is the inverse of :func:`unstack_states`.
+    """
+    batch_size = len(state_list)
+    assert (len(state_list[0]) - 2) % 6 == 0, len(state_list[0])
+    tot_num_layers = (len(state_list[0]) - 2) // 6
+
+    batch_states = []
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key = torch.cat(
+            [state_list[i][layer_offset] for i in range(batch_size)], dim=1
+        )
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn = torch.cat(
+            [state_list[i][layer_offset + 1] for i in range(batch_size)], dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1 = torch.cat(
+            [state_list[i][layer_offset + 2] for i in range(batch_size)], dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2 = torch.cat(
+            [state_list[i][layer_offset + 3] for i in range(batch_size)], dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1 = torch.cat(
+            [state_list[i][layer_offset + 4] for i in range(batch_size)], dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2 = torch.cat(
+            [state_list[i][layer_offset + 5] for i in range(batch_size)], dim=0
+        )
+        batch_states += [
+            cached_key,
+            cached_nonlin_attn,
+            cached_val1,
+            cached_val2,
+            cached_conv1,
+            cached_conv2,
+        ]
+
+    cached_embed_left_pad = torch.cat(
+        [state_list[i][-2] for i in range(batch_size)], dim=0
+    )
+    batch_states.append(cached_embed_left_pad)
+
+    processed_lens = torch.cat([state_list[i][-1] for i in range(batch_size)], dim=0)
+    batch_states.append(processed_lens)
+
+    return batch_states
+
+
+def unstack_states(batch_states: List[torch.Tensor]) -> List[List[torch.Tensor]]:
+    """Unstack the zipformer state corresponding to a batch of utterances
+    into a list of states, where the i-th entry is the state from the i-th
+    utterance in the batch.
+
+    Note:
+      It is the inverse of :func:`stack_states`.
+
+    Args:
+        batch_states: A list of cached tensors of all encoder layers. For layer-i,
+          states[i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1, cached_val2,
+          cached_conv1, cached_conv2).
+          state_list[-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+          states[-1] is processed_lens of shape (batch,), which records the number
+          of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Returns:
+        state_list: A list of list. Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance.
+    """
+    assert (len(batch_states) - 2) % 6 == 0, len(batch_states)
+    tot_num_layers = (len(batch_states) - 2) // 6
+
+    processed_lens = batch_states[-1]
+    batch_size = processed_lens.shape[0]
+
+    state_list = [[] for _ in range(batch_size)]
+
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key_list = batch_states[layer_offset].chunk(chunks=batch_size, dim=1)
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn_list = batch_states[layer_offset + 1].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1_list = batch_states[layer_offset + 2].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2_list = batch_states[layer_offset + 3].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1_list = batch_states[layer_offset + 4].chunk(
+            chunks=batch_size, dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2_list = batch_states[layer_offset + 5].chunk(
+            chunks=batch_size, dim=0
+        )
+        for i in range(batch_size):
+            state_list[i] += [
+                cached_key_list[i],
+                cached_nonlin_attn_list[i],
+                cached_val1_list[i],
+                cached_val2_list[i],
+                cached_conv1_list[i],
+                cached_conv2_list[i],
+            ]
+
+    cached_embed_left_pad_list = batch_states[-2].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(cached_embed_left_pad_list[i])
+
+    processed_lens_list = batch_states[-1].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(processed_lens_list[i])
+
+    return state_list
+
+
 def get_parameter_groups_with_lrs(
     model: torch.nn.Module,
     lr: float,
