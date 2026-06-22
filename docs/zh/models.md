@@ -202,28 +202,166 @@
 
 === "使用下载好的模型"
 
-    ```bash
+    ```python
+    from zipformer import inference
 
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        model="zipformer-large/jit_model.pt",
+        tokens="data/tokens.txt",
+        ctc=True,
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        model="zipformer-large/ctc.onnx",
+        tokens="data/tokens.txt",
+        ctc=True,
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        model="zipformer-large/ctc.fp16.onnx",
+        tokens="data/tokens.txt",
+        ctc=True,
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        model="zipformer-large/ctc.int8.onnx",
+        tokens="data/tokens.txt",
+        ctc=True,
+    )
     ```
 
 === "从 modelscope 自动下载模型"
 
-    ```bash
-    
+    ```python
+    from zipformer import inference
+
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        ms_model="pkufool/zipformer-large",
+        ctc=True,
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large",
+        ctc=True,
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large",
+        ctc=True,
+        dtype="fp16",
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large",
+        ctc=True,
+        dtype="int8",
+    )
     ```
 
 * 使用 transducer 头推理
 
 === "使用下载好的模型"
 
-    ```bash
+    ```python
+    from zipformer import inference
 
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        model="zipformer-large/jit_model.pt",
+        tokens="data/tokens.txt",
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        encoder="zipformer-large/encoder.onnx",
+        decoder="zipformer-large/decoder.onnx",
+        joiner="zipformer-large/joiner.onnx",
+        tokens="data/tokens.txt",
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        encoder="zipformer-large/encoder.fp16.onnx",
+        decoder="zipformer-large/decoder.onnx",
+        joiner="zipformer-large/joiner.fp16.onnx",
+        tokens="data/tokens.txt",
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        encoder="zipformer-large/encoder.int8.onnx",
+        decoder="zipformer-large/decoder.onnx",
+        joiner="zipformer-large/joiner.int8.onnx",
+        tokens="data/tokens.txt",
+    )
     ```
 
 === "从 modelscope 自动下载模型"
 
-    ```bash
-    
+    ```python
+    from zipformer import inference
+
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        ms_model="pkufool/zipformer-large",
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large",
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large",
+        dtype="fp16",
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large",
+        dtype="int8",
+    )
     ```
 
 ### 流式模型
@@ -299,18 +437,86 @@
 
 ##### 命令行使用
 
+> 下面的样例以 zipformer-large-streaming 为例，使用 `chunk-size=32, left-context-frames=128` 配置，其他模型同理
+
 * 使用 ctc 头推理
 
 === "使用下载好的模型"
 
     ```bash
+    # jit script model
+    zipformer inference \
+        --model zipformer-large-streaming/jit_model-chunk-32-left-128.pt \
+        --ctc 1 \
+        --streaming 1 \
+        --model-type jit \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
 
+    # onnx model
+    zipformer inference \
+        --model zipformer-large-streaming/ctc-chunk-32-left-128.onnx \
+        --ctc 1 \
+        --streaming 1 \
+        --model-type onnx \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
+
+    # onnx fp16 model
+    zipformer inference \
+        --model zipformer-large-streaming/ctc-chunk-32-left-128.fp16.onnx \
+        --ctc 1 \
+        --streaming 1 \
+        --model-type onnx \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
+
+    # onnx int8 model
+    zipformer inference \
+        --model zipformer-large-streaming/ctc-chunk-32-left-128.int8.onnx \
+        --ctc 1 \
+        --streaming 1 \
+        --model-type onnx \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
     ```
 
 === "从 modelscope 自动下载模型"
 
     ```bash
-    
+    # jit script model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --ctc 1 \
+        --streaming 1 \
+        --model-type jit \
+        data/en.wav data/zh.wav
+
+    # onnx model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --ctc 1 \
+        --streaming 1 \
+        --model-type onnx \
+        data/en.wav data/zh.wav
+
+    # onnx fp16 model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --ctc 1 \
+        --streaming 1 \
+        --dtype fp16 \
+        --model-type onnx \
+        data/en.wav data/zh.wav
+
+    # onnx int8 model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --ctc 1 \
+        --streaming 1 \
+        --dtype int8 \
+        --model-type onnx \
+        data/en.wav data/zh.wav
     ```
 
 * 使用 transducer 头推理
@@ -318,13 +524,77 @@
 === "使用下载好的模型"
 
     ```bash
+    # jit script model
+    zipformer inference \
+        --model zipformer-large-streaming/jit_model-chunk-32-left-128.pt \
+        --streaming 1 \
+        --model-type jit \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
 
+    # onnx model
+    zipformer inference \
+        --encoder zipformer-large-streaming/encoder-chunk-32-left-128.onnx \
+        --decoder zipformer-large-streaming/decoder-chunk-32-left-128.onnx \
+        --joiner zipformer-large-streaming/joiner-chunk-32-left-128.onnx \
+        --streaming 1 \
+        --model-type onnx \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
+
+    # onnx fp16 model
+    zipformer inference \
+        --encoder zipformer-large-streaming/encoder-chunk-32-left-128.fp16.onnx \
+        --decoder zipformer-large-streaming/decoder-chunk-32-left-128.onnx \
+        --joiner zipformer-large-streaming/joiner-chunk-32-left-128.fp16.onnx \
+        --streaming 1 \
+        --model-type onnx \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
+
+    # onnx int8 model
+    zipformer inference \
+        --encoder zipformer-large-streaming/encoder-chunk-32-left-128.int8.onnx \
+        --decoder zipformer-large-streaming/decoder-chunk-32-left-128.onnx \
+        --joiner zipformer-large-streaming/joiner-chunk-32-left-128.int8.onnx \
+        --streaming 1 \
+        --model-type onnx \
+        --tokens data/tokens.txt \
+        data/en.wav data/zh.wav
     ```
 
 === "从 modelscope 自动下载模型"
 
     ```bash
-    
+    # jit script model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --streaming 1 \
+        --model-type jit \
+        data/en.wav data/zh.wav
+
+    # onnx model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --streaming 1 \
+        --model-type onnx \
+        data/en.wav data/zh.wav
+
+    # onnx fp16 model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --streaming 1 \
+        --dtype fp16 \
+        --model-type onnx \
+        data/en.wav data/zh.wav
+
+    # onnx int8 model
+    zipformer inference \
+        --ms-model pkufool/zipformer-large-streaming \
+        --streaming 1 \
+        --dtype int8 \
+        --model-type onnx \
+        data/en.wav data/zh.wav
     ```
 
 ##### python api 使用
@@ -333,26 +603,180 @@
 
 === "使用下载好的模型"
 
-    ```bash
+    ```python
+    from zipformer import inference
 
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        model="zipformer-large-streaming/jit_model-chunk-32-left-128.pt",
+        tokens="data/tokens.txt",
+        streaming=True,
+        ctc=True,
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        model="zipformer-large-streaming/ctc-chunk-32-left-128.onnx",
+        tokens="data/tokens.txt",
+        streaming=True,
+        ctc=True,
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        model="zipformer-large-streaming/ctc-chunk-32-left-128.fp16.onnx",
+        tokens="data/tokens.txt",
+        streaming=True,
+        ctc=True,
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        model="zipformer-large-streaming/ctc-chunk-32-left-128.int8.onnx",
+        tokens="data/tokens.txt",
+        streaming=True,
+        ctc=True,
+    )
     ```
 
 === "从 modelscope 自动下载模型"
 
-    ```bash
-    
+    ```python
+    from zipformer import inference
+
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+        ctc=True,
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+        ctc=True,
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+        ctc=True,
+        dtype="fp16",
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+        ctc=True,
+        dtype="int8",
+    )
     ```
 
 * 使用 transducer 头推理
 
 === "使用下载好的模型"
 
-    ```bash
+    ```python
+    from zipformer import inference
 
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        model="zipformer-large-streaming/jit_model-chunk-32-left-128.pt",
+        tokens="data/tokens.txt",
+        streaming=True,
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        encoder="zipformer-large-streaming/encoder-chunk-32-left-128.onnx",
+        decoder="zipformer-large-streaming/decoder-chunk-32-left-128.onnx",
+        joiner="zipformer-large-streaming/joiner-chunk-32-left-128.onnx",
+        tokens="data/tokens.txt",
+        streaming=True,
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        encoder="zipformer-large-streaming/encoder-chunk-32-left-128.fp16.onnx",
+        decoder="zipformer-large-streaming/decoder-chunk-32-left-128.onnx",
+        joiner="zipformer-large-streaming/joiner-chunk-32-left-128.fp16.onnx",
+        tokens="data/tokens.txt",
+        streaming=True,
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        encoder="zipformer-large-streaming/encoder-chunk-32-left-128.int8.onnx",
+        decoder="zipformer-large-streaming/decoder-chunk-32-left-128.onnx",
+        joiner="zipformer-large-streaming/joiner-chunk-32-left-128.int8.onnx",
+        tokens="data/tokens.txt",
+        streaming=True,
+    )
     ```
 
 === "从 modelscope 自动下载模型"
 
-    ```bash
-    
+    ```python
+    from zipformer import inference
+
+    # jit script model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="jit",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+    )
+
+    # onnx model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+    )
+
+    # onnx fp16 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+        dtype="fp16",
+    )
+
+    # onnx int8 model
+    results = inference(
+        ["data/en.wav", "data/zh.wav"],
+        model_type="onnx",
+        ms_model="pkufool/zipformer-large-streaming",
+        streaming=True,
+        dtype="int8",
+    )
     ```
