@@ -1,8 +1,4 @@
-<div align="right">
-
-[中文](./README-zh.md)
-
-</div>
+[中文版本](./README-zh.md)
 
 <div align="center">
 

@@ -20,3 +20,46 @@ Zipformer 模型里面有众多的创新，主要的包括:
 pip install zipformer
 ```
 
+!!! note
+
+    下面的示例采用非流式的 medium 模型，更多模型请查看[文档](./models.md)
+
+
+### 命令行
+
+```bash
+# Use jit scripted model
+# Transducer
+zipformer inference --ms-model pkufool/zipformer-medium --model-type jit --ctc 0 en.wav zh.wav
+
+# CTC
+zipformer inference --ms-model pkufool/zipformer-medium --model-type jit --ctc 1 en.wav zh.wav
+
+# Use onnx model
+# Transducer
+zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 0 en.wav zh.wav
+
+# CTC
+zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 1 en.wav zh.wav
+```
+
+### Python API
+
+```python
+from zipformer import inference
+
+# jit scripted mdoel
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=False)
+
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=True)
+
+# onnx model
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False)
+
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True)
+
+# fp16 model
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False, dtype='fp16')
+
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True, dtype='fp16')
+```

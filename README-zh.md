@@ -1,8 +1,4 @@
-<div align="right">
-
-[English](./README.md)
-
-</div>
+[English Version](./README.md)
 
 <div align="center">
 

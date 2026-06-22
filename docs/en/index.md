@@ -19,3 +19,46 @@ For more details, please refer to the [paper](https://arxiv.org/pdf/2310.11230.p
 ```bash
 pip install zipformer
 ```
+
+!!! note
+
+    The examples below use the non-streaming medium model. For more models, please refer to the [documentation](./models.md).
+
+### Command Line
+
+```bash
+# Use jit scripted model
+# Transducer
+zipformer inference --ms-model pkufool/zipformer-medium --model-type jit --ctc 0 en.wav zh.wav
+
+# CTC
+zipformer inference --ms-model pkufool/zipformer-medium --model-type jit --ctc 1 en.wav zh.wav
+
+# Use onnx model
+# Transducer
+zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 0 en.wav zh.wav
+
+# CTC
+zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 1 en.wav zh.wav
+```
+
+### Python API
+
+```python
+from zipformer import inference
+
+# jit scripted model
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=False)
+
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=True)
+
+# onnx model
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False)
+
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True)
+
+# fp16 model
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False, dtype='fp16')
+
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True, dtype='fp16')
+```
