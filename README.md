@@ -25,15 +25,15 @@ zipformer is a speech encoder that achieves both high performance and efficiency
 
 zipformer ASR models are available in xlarge, large, medium, and small variants, with both streaming and non-streaming versions. The table below provides download links. For more details, please refer to the [documentation](https://pkufool.github.io/zipformer/models).
 
-| Model | Parameters | Config | ModelScope | Huggingface | Languages | Architectures |
-| -- | -- | -- | -- | -- | -- | -- |
-| zipformer-xlarge           | 300M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,1024,2048,3072,2048,1024<br>--encoder-dim 192,384,768,1024,768,384<br>--encoder-unmasked-dim 192,256,320,512,320,256 | [link](https://www.modelscope.cn/models/pkufool/zipformer-xlarge) | [link](https://huggingface.co/pkufool/zipformer-xlarge) | Chinese, English | CTC |
-| zipformer-large            | 150M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,768,1536,2048,1536,768<br>--encoder-dim 192,256,512,768,512,256<br>--encoder-unmasked-dim 192,192,256,320,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-large) | [link](https://huggingface.co/pkufool/zipformer-large) | Chinese, English | CTC, Transducer |
-| zipformer-large-streaming  | 150M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,768,1536,2048,1536,768<br>--encoder-dim 192,256,512,768,512,256<br>--encoder-unmasked-dim 192,192,256,320,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-large-streaming) | [link](https://huggingface.co/pkufool/zipformer-large-streaming) | Chinese, English | CTC, Transducer |
-| zipformer-medium           | 65M | --num-encoder-layers 2,2,3,4,3,2<br>--feedforward-dim 512,768,1024,1536,1024,768<br>--encoder-dim 192,256,384,512,384,256<br>--encoder-unmasked-dim 192,192,256,256,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium) | [link](https://huggingface.co/pkufool/zipformer-medium) | Chinese, English | CTC, Transducer  |
-| zipformer-medium-streaming | 65M | --num-encoder-layers 2,2,3,4,3,2<br>--feedforward-dim 512,768,1024,1536,1024,768<br>--encoder-dim 192,256,384,512,384,256<br>--encoder-unmasked-dim 192,192,256,256,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium-streaming) | [link](https://huggingface.co/pkufool/zipformer-medium-streaming) | Chinese, English | CTC, Transducer |
-| zipformer-small            | 25M | --num-encoder-layers 2,2,2,2,2,2<br>--feedforward-dim 512,768,768,768,768,768<br>--encoder-dim 192,256,256,256,256,256<br>--encoder-unmasked-dim 192,192,192,192,192,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-small) | [link](https://huggingface.co/pkufool/zipformer-small) | Chinese, English | CTC, Transducer |
-| zipformer-small-streaming  | 25M | --num-encoder-layers 2,2,2,2,2,2<br>--feedforward-dim 512,768,768,768,768,768<br>--encoder-dim 192,256,256,256,256,256<br>--encoder-unmasked-dim 192,192,192,192,192,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-small-streaming) | [link](https://huggingface.co/pkufool/zipformer-small-streaming) | Chinese, English | CTC, Transducer |
+| Model | Parameters | ModelScope | Huggingface | Languages | Architectures |
+| -- | -- | -- | -- | -- | -- |
+| zipformer-xlarge           | 300M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-xlarge) | [link](https://huggingface.co/pkufool/zipformer-xlarge) | Chinese, English | CTC |
+| zipformer-large            | 150M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-large) | [link](https://huggingface.co/pkufool/zipformer-large) | Chinese, English | CTC, Transducer |
+| zipformer-large-streaming  | 150M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-large-streaming) | [link](https://huggingface.co/pkufool/zipformer-large-streaming) | Chinese, English | CTC, Transducer |
+| zipformer-medium           | 65M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium) | [link](https://huggingface.co/pkufool/zipformer-medium) | Chinese, English | CTC, Transducer  |
+| zipformer-medium-streaming | 65M | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium-streaming) | [link](https://huggingface.co/pkufool/zipformer-medium-streaming) | Chinese, English | CTC, Transducer |
+| zipformer-small            | 25M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-small) | [link](https://huggingface.co/pkufool/zipformer-small) | Chinese, English | CTC, Transducer |
+| zipformer-small-streaming  | 25M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-small-streaming) | [link](https://huggingface.co/pkufool/zipformer-small-streaming) | Chinese, English | CTC, Transducer |
 
 ## News
 
@@ -56,17 +56,17 @@ pip install zipformer
 ```bash
 # Use jit scripted model
 # Transducer
-zipformer inference --ms-model pkufool/zipformer-medium --model-type jit --ctc 0 en.wav zh.wav
+zipformer inference --hf-model pkufool/zipformer-medium --model-type jit --ctc 0 en.wav zh.wav
 
 # CTC
-zipformer inference --ms-model pkufool/zipformer-medium --model-type jit --ctc 1 en.wav zh.wav
+zipformer inference --hf-model pkufool/zipformer-medium --model-type jit --ctc 1 en.wav zh.wav
 
 # Use onnx model
 # Transducer
-zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 0 en.wav zh.wav
+zipformer inference --hf-model pkufool/zipformer-medium --model-type onnx --ctc 0 en.wav zh.wav
 
 # CTC
-zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 1 en.wav zh.wav
+zipformer inference --hf-model pkufool/zipformer-medium --model-type onnx --ctc 1 en.wav zh.wav
 ```
 
 ### Python API
@@ -75,19 +75,19 @@ zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 
 from zipformer import inference
 
 # jit scripted model
-result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=False)
+result = inference([en.wav, zh.wav], hf_model='pkufool/zipformer-medium', model_type='jit', ctc=False)
 
-result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=True)
+result = inference([en.wav, zh.wav], hf_model='pkufool/zipformer-medium', model_type='jit', ctc=True)
 
 # onnx model
-result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False)
+result = inference([en.wav, zh.wav], hf_model='pkufool/zipformer-medium', model_type='onnx', ctc=False)
 
-result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True)
+result = inference([en.wav, zh.wav], hf_model='pkufool/zipformer-medium', model_type='onnx', ctc=True)
 
 # fp16 model
-result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False, dtype='fp16')
+result = inference([en.wav, zh.wav], hf_model='pkufool/zipformer-medium', model_type='onnx', ctc=False, dtype='fp16')
 
-result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True, dtype='fp16')
+result = inference([en.wav, zh.wav], hf_model='pkufool/zipformer-medium', model_type='onnx', ctc=True, dtype='fp16')
 ```
 
 ## Documentation

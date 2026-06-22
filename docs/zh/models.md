@@ -1,6 +1,16 @@
-# 语音识别模型
-
 本页列出 zipformer 预训练模型及其在常用开源测试集的性能和对应的使用方法。
+
+## 模型配置
+
+zipformer 目前提供 `xlarge, large, medium, small` 等几个变体，具体配置参数见下表。
+
+| 模型 | 参数量 | 配置 | 
+| -- | -- | -- | 
+| xlarge   | 300M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,1024,2048,3072,2048,1024<br>--encoder-dim 192,384,768,1024,768,384<br>--encoder-unmasked-dim 192,256,320,512,320,256 |
+| large    | 150M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,768,1536,2048,1536,768<br>--encoder-dim 192,256,512,768,512,256<br>--encoder-unmasked-dim 192,192,256,320,256,192 |
+| medium   | 65M | --num-encoder-layers 2,2,3,4,3,2<br>--feedforward-dim 512,768,1024,1536,1024,768<br>--encoder-dim 192,256,384,512,384,256<br>--encoder-unmasked-dim 192,192,256,256,256,192 |
+| small    | 25M | --num-encoder-layers 2,2,2,2,2,2<br>--feedforward-dim 512,768,768,768,768,768<br>--encoder-dim 192,256,256,256,256,256<br>--encoder-unmasked-dim 192,192,192,192,192,192 |
+
 
 ## 中英文模型
 

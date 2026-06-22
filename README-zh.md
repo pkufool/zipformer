@@ -25,15 +25,15 @@ zipformer 是一个兼具性能和效率的语音编码器，针对语音识别�
 
 zipformer ASR 模型目前提供 xlarge，large，medium，small 四种变体及对应的流式和非流式模型，下表为模型下载地址，更多具体信息请参见[文档](https://pkufool.github.io/zipformer/zh/models).
 
-| 模型 | 参数量 | 配置 | ModelScope | Huggingface | 支持语言 | 支持架构 |
-| -- | -- | -- | -- | -- | -- | -- |
-| zipformer-xlarge           | 300M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,1024,2048,3072,2048,1024<br>--encoder-dim 192,384,768,1024,768,384<br>--encoder-unmasked-dim 192,256,320,512,320,256 | [link](https://www.modelscope.cn/models/pkufool/zipformer-xlarge) | [link](https://huggingface.co/pkufool/zipformer-xlarge) | 中文、英文 | CTC |
-| zipformer-large            | 150M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,768,1536,2048,1536,768<br>--encoder-dim 192,256,512,768,512,256<br>--encoder-unmasked-dim 192,192,256,320,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-large) | [link](https://huggingface.co/pkufool/zipformer-large) | 中文、英文 | CTC、Transducer |
-| zipformer-large-streaming  | 150M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,768,1536,2048,1536,768<br>--encoder-dim 192,256,512,768,512,256<br>--encoder-unmasked-dim 192,192,256,320,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-large-streaming) | [link](https://huggingface.co/pkufool/zipformer-large-streaming) | 中文、英文 | CTC、Transducer |
-| zipformer-medium           | 65M | --num-encoder-layers 2,2,3,4,3,2<br>--feedforward-dim 512,768,1024,1536,1024,768<br>--encoder-dim 192,256,384,512,384,256<br>--encoder-unmasked-dim 192,192,256,256,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium) | [link](https://huggingface.co/pkufool/zipformer-medium) | 中文、英文 | CTC、Transducer  |
-| zipformer-medium-streaming | 65M | --num-encoder-layers 2,2,3,4,3,2<br>--feedforward-dim 512,768,1024,1536,1024,768<br>--encoder-dim 192,256,384,512,384,256<br>--encoder-unmasked-dim 192,192,256,256,256,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium-streaming) | [link](https://huggingface.co/pkufool/zipformer-medium-streaming) | 中文、英文 | CTC、Transducer |
-| zipformer-small            | 25M | --num-encoder-layers 2,2,2,2,2,2<br>--feedforward-dim 512,768,768,768,768,768<br>--encoder-dim 192,256,256,256,256,256<br>--encoder-unmasked-dim 192,192,192,192,192,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-small) | [link](https://huggingface.co/pkufool/zipformer-small) | 中文、英文 | CTC、Transducer |
-| zipformer-small-streaming  | 25M | --num-encoder-layers 2,2,2,2,2,2<br>--feedforward-dim 512,768,768,768,768,768<br>--encoder-dim 192,256,256,256,256,256<br>--encoder-unmasked-dim 192,192,192,192,192,192 | [link](https://www.modelscope.cn/models/pkufool/zipformer-small-streaming) | [link](https://huggingface.co/pkufool/zipformer-small-streaming) | 中文、英文 | CTC、Transducer |
+| 模型 | 参数量 |  ModelScope | Huggingface | 支持语言 | 支持架构 |
+| -- | -- | --  | -- | -- | -- |
+| zipformer-xlarge           | 300M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-xlarge) | [link](https://huggingface.co/pkufool/zipformer-xlarge) | 中文、英文 | CTC |
+| zipformer-large            | 150M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-large) | [link](https://huggingface.co/pkufool/zipformer-large) | 中文、英文 | CTC、Transducer |
+| zipformer-large-streaming  | 150M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-large-streaming) | [link](https://huggingface.co/pkufool/zipformer-large-streaming) | 中文、英文 | CTC、Transducer |
+| zipformer-medium           | 65M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium) | [link](https://huggingface.co/pkufool/zipformer-medium) | 中文、英文 | CTC、Transducer  |
+| zipformer-medium-streaming | 65M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-medium-streaming) | [link](https://huggingface.co/pkufool/zipformer-medium-streaming) | 中文、英文 | CTC、Transducer |
+| zipformer-small            | 25M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-small) | [link](https://huggingface.co/pkufool/zipformer-small) | 中文、英文 | CTC、Transducer |
+| zipformer-small-streaming  | 25M  | [link](https://www.modelscope.cn/models/pkufool/zipformer-small-streaming) | [link](https://huggingface.co/pkufool/zipformer-small-streaming) | 中文、英文 | CTC、Transducer |
 
 ## 新闻
 

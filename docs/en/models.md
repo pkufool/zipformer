@@ -1,6 +1,16 @@
-# Speech Recognition Models
-
 This page lists zipformer pre-trained models and their performance on commonly used open-source test sets, along with usage instructions.
+
+## Configuration
+
+zipformer models are available in xlarge, large, medium, and small variants, the model configurations are as follows.
+
+| Variant | Parameters  | Configration | 
+| -- | -- | -- | 
+| xlarge   | 300M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,1024,2048,3072,2048,1024<br>--encoder-dim 192,384,768,1024,768,384<br>--encoder-unmasked-dim 192,256,320,512,320,256 |
+| large    | 150M | --num-encoder-layers 2,2,4,5,4,2<br>--feedforward-dim 512,768,1536,2048,1536,768<br>--encoder-dim 192,256,512,768,512,256<br>--encoder-unmasked-dim 192,192,256,320,256,192 |
+| medium   | 65M | --num-encoder-layers 2,2,3,4,3,2<br>--feedforward-dim 512,768,1024,1536,1024,768<br>--encoder-dim 192,256,384,512,384,256<br>--encoder-unmasked-dim 192,192,256,256,256,192 |
+| small    | 25M | --num-encoder-layers 2,2,2,2,2,2<br>--feedforward-dim 512,768,768,768,768,768<br>--encoder-dim 192,256,256,256,256,256<br>--encoder-unmasked-dim 192,192,192,192,192,192 |
+
 
 ## Chinese-English Models
 
