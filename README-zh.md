@@ -73,19 +73,19 @@ zipformer inference --ms-model pkufool/zipformer-medium --model-type onnx --ctc 
 from zipformer import inference
 
 # jit scripted mdoel
-result = inference([en.wav, zh.wav], ms-model='pkufool/zipformer-medium', model-type='jit', ctc=False)
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=False)
 
-result = inference([en.wav, zh.wav], ms-model='pkufool/zipformer-medium', model-type='jit', ctc=True)
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='jit', ctc=True)
 
 # onnx model
-result = inference([en.wav, zh.wav], ms-model='pkufool/zipformer-medium', model-type='onnx', ctc=False)
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False)
 
-result = inference([en.wav, zh.wav], ms-model='pkufool/zipformer-medium', model-type='onnx', ctc=True)
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True)
 
 # fp16 model
-result = inference([en.wav, zh.wav], ms-model='pkufool/zipformer-medium', model-type='onnx', ctc=False, dtype='fp16')
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=False, dtype='fp16')
 
-result = inference([en.wav, zh.wav], ms-model='pkufool/zipformer-medium', model-type='onnx', ctc=True, dtype='fp16')
+result = inference([en.wav, zh.wav], ms_model='pkufool/zipformer-medium', model_type='onnx', ctc=True, dtype='fp16')
 ```
 
 ## 详细文档
