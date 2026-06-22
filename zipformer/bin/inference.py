@@ -943,17 +943,17 @@ def _get_model_filenames(
                     f"joiner-chunk-{chunk_size}-left-{left_context_frames}"
                 )
                 if dtype == "fp16":
-                    filenames["encoder"] = encoder_filename + ".encoder.fp16.onnx"
-                    filenames["decoder"] = decoder_filename + ".decoder.onnx"
-                    filenames["joiner"] = joiner_filename + ".joiner.fp16.onnx"
+                    filenames["encoder"] = encoder_filename + ".fp16.onnx"
+                    filenames["decoder"] = decoder_filename + ".onnx"
+                    filenames["joiner"] = joiner_filename + ".fp16.onnx"
                 elif dtype == "int8":
-                    filenames["encoder"] = encoder_filename + ".encoder.int8.onnx"
-                    filenames["decoder"] = decoder_filename + ".decoder.onnx"
-                    filenames["joiner"] = joiner_filename + ".joiner.int8.onnx"
+                    filenames["encoder"] = encoder_filename + ".int8.onnx"
+                    filenames["decoder"] = decoder_filename + ".onnx"
+                    filenames["joiner"] = joiner_filename + ".int8.onnx"
                 else:
-                    filenames["encoder"] = encoder_filename + ".encoder.onnx"
-                    filenames["decoder"] = decoder_filename + ".decoder.onnx"
-                    filenames["joiner"] = joiner_filename + ".joiner.onnx"
+                    filenames["encoder"] = encoder_filename + ".onnx"
+                    filenames["decoder"] = decoder_filename + ".onnx"
+                    filenames["joiner"] = joiner_filename + ".onnx"
             else:
                 if dtype == "fp16":
                     filenames["encoder"] = "encoder.fp16.onnx"
@@ -1142,9 +1142,9 @@ def inference(
             )
         elif streaming:
             return _infer_onnx_streaming(
-                encoder_path=encoder,
-                decoder_path=decoder,
-                joiner_path=joiner,
+                encoder=encoder,
+                decoder=decoder,
+                joiner=joiner,
                 tokens=tokens,
                 sound_files=sound_files,
                 sample_rate=sample_rate,
@@ -1162,9 +1162,9 @@ def inference(
             )
         else:
             return _infer_onnx(
-                encoder_path=encoder,
-                decoder_path=decoder,
-                joiner_path=joiner,
+                encoder=encoder,
+                decoder=decoder,
+                joiner=joiner,
                 tokens=tokens,
                 sound_files=sound_files,
                 sample_rate=sample_rate,

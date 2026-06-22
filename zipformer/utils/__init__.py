@@ -30,6 +30,8 @@ from .utils import (
     torch_autocast,
     write_error_stats,
     pad_sequences,
+    stack_states,
+    unstack_states,
     SymbolTable,
     raise_grad_scale_is_too_small_error,
 )
