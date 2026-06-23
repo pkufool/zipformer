@@ -24,19 +24,16 @@ theme:
       primary: indigo
       accent: indigo
   features:
-    - navigation.tabs
     - navigation.sections
     - content.code.copy
     - content.tabs.link
 
 nav:
-  - 快速开始:
-    - 介绍: index.md
-    - 模型: models.md
-    - 训练: training.md
-    - 部署: deployment.md
+  - 简介: index.md
+  - 模型: models.md
+  - 训练: training.md
+  - 部署: deployment.md
   - API 参考: api/index.md
-  - 留言: message.md
 
 plugins:
   - search:

@@ -24,19 +24,16 @@ theme:
       primary: indigo
       accent: indigo
   features:
-    - navigation.tabs
     - navigation.sections
     - content.code.copy
     - content.tabs.link
 
 nav:
-  - Getting Started:
-    - Introduction: index.md
-    - Models: models.md
-    - Training: training.md
-    - Deployment: deployment.md
+  - Introduction: index.md
+  - Models: models.md
+  - Training: training.md
+  - Deployment: deployment.md
   - API Reference: api/index.md
-  - Message: message.md
 
 plugins:
   - search:

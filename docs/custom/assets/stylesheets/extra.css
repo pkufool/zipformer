@@ -1,0 +1,6 @@
+.md-grid {
+    /* 最小900px，随屏幕比例放大，最大限制2000px */
+    max-width: clamp(900px, 85vw, 2000px);
+    margin: 0 auto;
+    padding: 0 0.75rem;
+}
