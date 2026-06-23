@@ -16,6 +16,7 @@
 # limitations under the License.
 
 import sys
+import logging
 
 
 def main():
@@ -32,6 +33,9 @@ def main():
             usage += f"  {cmd}\n"
         print(usage)
         sys.exit(0)
+
+    formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    logging.basicConfig(format=formatter, level=logging.INFO)
 
     command = sys.argv[1]
     if command not in commands:

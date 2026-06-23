@@ -15,6 +15,8 @@ from .log import setup_logger, MetricsTracker, get_env_info
 
 from .utils import (
     AttributeDict,
+    LOG_EPS,
+    SymbolTable,
     add_eos,
     add_sos,
     get_parameter_groups_with_lrs,
@@ -32,7 +34,6 @@ from .utils import (
     pad_sequences,
     stack_states,
     unstack_states,
-    SymbolTable,
     raise_grad_scale_is_too_small_error,
 )
 

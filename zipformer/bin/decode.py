@@ -59,7 +59,7 @@ from zipformer.utils import (
     store_transcripts,
     str2bool,
     write_error_stats,
-    remove_punctuation,
+    replace_punctuation_with_space,
     tokenize_by_cjk_char,
 )
 
@@ -417,8 +417,8 @@ def decode_dataset(
                     hyp_words = gigaspeech_post_processing(hyp_words)
 
                 if params.ignore_punctuation:
-                    ref_words = remove_punctuation(ref_words)
-                    hyp_words = remove_punctuation(hyp_words)
+                    ref_words = replace_punctuation_with_space(ref_words)
+                    hyp_words = replace_punctuation_with_space(hyp_words)
 
                 ref_words = tokenize_by_cjk_char(ref_words.lower())
                 hyp_words = tokenize_by_cjk_char(hyp_words.lower())

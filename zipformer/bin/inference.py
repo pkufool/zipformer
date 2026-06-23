@@ -348,6 +348,11 @@ def _infer_jit(
 
     features, feature_lengths = _extract_features(sound_files, sample_rate, device)
 
+    token_table = SymbolTable.from_file(tokens)
+    durations = get_audio_durations(sound_files)
+
+    start_time = time.time()
+
     encoder_out, encoder_out_lens = model.encoder(
         features=features,
         feature_lengths=feature_lengths,
@@ -355,14 +360,13 @@ def _infer_jit(
 
     hyps = greedy_search(model, encoder_out, encoder_out_lens)
 
-    token_table = SymbolTable.from_file(tokens)
-    durations = get_audio_durations(sound_files)
+    elapsed = time.time() - start_time
 
     results = []
     for filename, hyp, dur in zip(sound_files, hyps, durations):
         text = token_ids_to_text(hyp, token_table)
         results.append({"filename": filename, "text": text, "duration": dur})
-    return results
+    return results, elapsed
 
 
 def _infer_jit_streaming(
@@ -421,6 +425,8 @@ def _infer_jit_streaming(
 
     batch_states = stack_states([s.states for s in decode_streams])
 
+    start_time = time.time()
+
     while len(decode_streams) > 0:
         batch_features = []
         batch_feature_lens = []
@@ -475,6 +481,8 @@ def _infer_jit_streaming(
         else:
             batch_states = new_states
 
+    elapsed = time.time() - start_time
+
     results = []
     for idx in range(num_streams):
         stream = all_streams[idx]
@@ -487,7 +495,7 @@ def _infer_jit_streaming(
                 "duration": durations[idx],
             }
         )
-    return results
+    return results, elapsed
 
 
 def _infer_jit_ctc(
@@ -503,7 +511,11 @@ def _infer_jit_ctc(
     model.eval()
     model.to(device)
 
+    token_table = SymbolTable.from_file(tokens)
+    durations = get_audio_durations(sound_files)
     features, feature_lengths = _extract_features(sound_files, sample_rate, device)
+
+    start_time = time.time()
 
     encoder_out, encoder_out_lens = model.encoder(
         features=features,
@@ -513,14 +525,13 @@ def _infer_jit_ctc(
     ctc_output = model.ctc_output(encoder_out)
     hyps = ctc_greedy_search(ctc_output, encoder_out_lens)
 
-    token_table = SymbolTable.from_file(tokens)
-    durations = get_audio_durations(sound_files)
-
     results = []
     for filename, hyp, dur in zip(sound_files, hyps, durations):
         text = token_ids_to_text(hyp, token_table)
         results.append({"filename": filename, "text": text, "duration": dur})
-    return results
+
+    elapsed = time.time() - start_time
+    return results, elapsed
 
 
 def _infer_jit_streaming_ctc(
@@ -579,6 +590,8 @@ def _infer_jit_streaming_ctc(
 
     batch_states = stack_states([s.states for s in decode_streams])
 
+    start_time = time.time()
+
     while len(decode_streams) > 0:
         batch_features = []
         batch_feature_lens = []
@@ -632,6 +645,8 @@ def _infer_jit_streaming_ctc(
         else:
             batch_states = new_states
 
+    elapsed = time.time() - start_time
+
     results = []
     for idx in range(num_streams):
         stream = all_streams[idx]
@@ -643,7 +658,7 @@ def _infer_jit_streaming_ctc(
                 "duration": durations[idx],
             }
         )
-    return results
+    return results, elapsed
 
 
 def _infer_onnx(
@@ -661,18 +676,22 @@ def _infer_onnx(
     model = OnnxTransducerModel(encoder, decoder, joiner)
     features, feature_lengths = _extract_features(sound_files, sample_rate, device)
 
+    token_table = SymbolTable.from_file(tokens)
+    durations = get_audio_durations(sound_files)
+
+    start_time = time.time()
+
     encoder_out, encoder_out_lens = model.run_encoder(features, feature_lengths)
 
     hyps = greedy_search(model, encoder_out, encoder_out_lens)
 
-    token_table = SymbolTable.from_file(tokens)
-    durations = get_audio_durations(sound_files)
+    elapsed = time.time() - start_time
 
     results = []
     for filename, hyp, dur in zip(sound_files, hyps, durations):
         text = token_ids_to_text(hyp, token_table)
         results.append({"filename": filename, "text": text, "duration": dur})
-    return results
+    return results, elapsed
 
 
 def _infer_onnx_ctc(
@@ -690,18 +709,22 @@ def _infer_onnx_ctc(
     features = features.cpu()
     feature_lengths = feature_lengths.cpu()
 
+    token_table = SymbolTable.from_file(tokens)
+    durations = get_audio_durations(sound_files)
+
+    start_time = time.time()
+
     log_probs, log_probs_len = model(features, feature_lengths)
 
     hyps = ctc_greedy_search(log_probs, log_probs_len)
 
-    token_table = SymbolTable.from_file(tokens)
-    durations = get_audio_durations(sound_files)
+    elapsed = time.time() - start_time
 
     results = []
     for filename, hyp, dur in zip(sound_files, hyps, durations):
         text = token_ids_to_text(hyp, token_table)
         results.append({"filename": filename, "text": text, "duration": dur})
-    return results
+    return results, elapsed
 
 
 def _infer_onnx_streaming(
@@ -737,6 +760,8 @@ def _infer_onnx_streaming(
             "decoding_method": decoding_method,
         }
     )
+
+    start_time = time.time()
 
     results = []
     for idx in range(len(sound_files)):
@@ -780,7 +805,9 @@ def _infer_onnx_streaming(
                 "duration": durations[idx],
             }
         )
-    return results
+
+    elapsed = time.time() - start_time
+    return results, elapsed
 
 
 def _infer_onnx_streaming_ctc(
@@ -813,6 +840,8 @@ def _infer_onnx_streaming_ctc(
             "decoding_method": decoding_method,
         }
     )
+
+    start_time = time.time()
 
     results = []
     for idx in range(len(sound_files)):
@@ -863,7 +892,8 @@ def _infer_onnx_streaming_ctc(
             }
         )
 
-    return results
+    elapsed = time.time() - start_time
+    return results, elapsed
 
 
 # ==============================================================================
@@ -1053,7 +1083,8 @@ def inference(
       device: Device string ("cuda", "cpu", or "" for auto).
 
     Returns:
-      List of dicts with keys: filename, text, duration.
+      A tuple (results, elapsed) where results is a list of dicts with keys:
+      filename, text, duration; and elapsed is the inference + decoding time in seconds.
     """
     # Resolve device
     if device:
@@ -1186,9 +1217,7 @@ def main():
 
     logging.info(vars(args))
 
-    start_time = time.time()
-
-    results = inference(
+    results, elapsed = inference(
         sound_files=args.sound_files,
         model_type=args.model_type,
         streaming=args.streaming,
@@ -1206,8 +1235,6 @@ def main():
         left_context_frames=args.left_context_frames,
         sample_rate=args.sample_rate,
     )
-
-    elapsed = time.time() - start_time
     print_results(results, elapsed)
 
 
