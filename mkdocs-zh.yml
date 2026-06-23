@@ -71,10 +71,10 @@ extra_css:
 extra:
   alternate:  
     - name: English
-      link: /
+      link: /zipformer/
       lang: en
     - name: 中文
-      link: /zh/
+      link: /zipformer/zh/
       lang: zh
   social:
     - icon: fontawesome/brands/github
