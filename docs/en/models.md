@@ -1,3 +1,7 @@
+---
+comments: true
+---
+
 This page lists zipformer pre-trained models and their performance on commonly used open-source test sets, along with usage instructions.
 
 ## Configuration

@@ -1,3 +1,7 @@
+---
+comments: true
+---
+
 # Zipformer
 
 Zipformer 是小米集团新一代 Kaldi 团队研发的新型语音编码器，它具有效果更好、计算更快、更省内存等诸多优点，是 google conformer 模型发布以后首个已知的在单数据集（Librispeech）上超越 conformer 论文的语音编码器，Zipformer 被 ICLR 2024 接收为 Oral 论文 (前 1.2%)。

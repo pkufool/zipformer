@@ -1,3 +1,7 @@
+---
+comments: true
+---
+
 # Zipformer
 
 Zipformer is a novel speech encoder developed by the Next-Gen Kaldi team at Xiaomi. It offers superior accuracy, faster computation, and lower memory usage. It is the first known speech encoder to surpass the Conformer paper on a single dataset (LibriSpeech) after Google's Conformer was published. Zipformer was accepted as an Oral paper (top 1.2%) at ICLR 2024.

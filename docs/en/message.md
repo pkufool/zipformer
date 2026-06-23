@@ -1,12 +1,14 @@
-# Guestbook
+---
+comments: true
+title: Message
+---
+<style>
+    .md-source-file {
+      display : none;
+    }
+    #__comments {
+      display : none;
+    }
+</style>
 
-Have questions, feedback, or want to share how you're using Zipformer?
-
-Head over to our [GitHub Discussions](https://github.com/pkufool/zipformer/discussions) page to join the conversation.
-
-You can use Discussions to:
-
-- **Ask questions** about setup, configuration, or usage
-- **Share feedback** on the project
-- **Showcase** your projects built with Zipformer
-- **Request features** or report bugs
+Leave us a message with any problems you encounter during the use of the zipformer, your opinions and suggestions on the Next-gen Kaldi are also welcome! 
