@@ -1,8 +1,9 @@
-torch>=2.1.0
-torchaudio>=2.1.0
+torch >=2.1.0,<2.8
+torchaudio >=2.1.0,<2.8
 simple-sentencepiece>=0.13
 atdataset>=0.1.6
 tqdm
+tensorboard
 huggingface_hub
 modelscope
 onnx
@@ -10,6 +11,7 @@ onnxconverter_common
 onnxruntime
 kaldifst
 kaldialign
+packaging
 
 # for docs
 mkdocs-material>=9.0

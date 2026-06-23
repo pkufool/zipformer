@@ -21,7 +21,6 @@ import json
 import logging
 import math
 import pathlib
-import random
 import warnings
 import re
 
@@ -35,7 +34,6 @@ from typing import Dict, Iterable, List, Optional, TextIO, Tuple, Union
 import kaldialign
 import torch
 
-from lhotse.dataset.signal_transforms import time_warp as time_warp_impl
 from packaging import version
 
 
@@ -679,36 +677,6 @@ def get_parameter_groups_with_lrs(
             for lr_val, pairs in lr_to_params.items()
         ]
     return [{"params": params, "lr": lr_val} for lr_val, params in lr_to_params.items()]
-
-
-def time_warp(
-    features: torch.Tensor,
-    p: float = 0.9,
-    time_warp_factor: Optional[int] = 80,
-    supervision_segments: Optional[torch.Tensor] = None,
-):
-    if time_warp_factor is None or time_warp_factor < 1:
-        return features
-    assert len(features.shape) == 3, (
-        f"SpecAugment only supports 3D tensors: {features.shape}"
-    )
-    features = features.clone()
-    if supervision_segments is None:
-        for sequence_idx in range(features.size(0)):
-            if random.random() > p:
-                continue
-            features[sequence_idx] = time_warp_impl(
-                features[sequence_idx], factor=time_warp_factor
-            )
-    else:
-        for sequence_idx, start_frame, num_frames in supervision_segments:
-            if random.random() > p:
-                continue
-            end_frame = start_frame + num_frames
-            features[sequence_idx, start_frame:end_frame] = time_warp_impl(
-                features[sequence_idx, start_frame:end_frame], factor=time_warp_factor
-            )
-    return features
 
 
 def raise_grad_scale_is_too_small_error(cur_grad_scale: float):

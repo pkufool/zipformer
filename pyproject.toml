@@ -4,18 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zipformer"
-version = "0.1.2"
+version = "0.1.3"
 description = "zipformer: A faster and better encoder for ASR"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [{ name = "Next-gen Kaldi Team" }]
 dependencies = [
-  "torch>=2.1.0",
-  "torchaudio>=2.1.0",
+  "torch >=2.1.0,<2.8",
+  "torchaudio >=2.1.0,<2.8",
   "simple-sentencepiece>=0.13",
   "atdataset>=0.1.6",
   "tqdm",
+  "tensorboard",
   "huggingface_hub",
   "modelscope",
   "onnx",
@@ -23,6 +24,7 @@ dependencies = [
   "onnxruntime",
   "kaldifst",
   "kaldialign",
+  "packaging",
 ]
 classifiers = [
   "License :: OSI Approved :: Apache Software License",
