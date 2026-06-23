@@ -9,26 +9,29 @@ from .checkpoint import (
     update_averaged_model,
 )
 
-from .utils import (
-    cleanup_dist,
-    setup_dist,
-    get_env_info,
-    raise_grad_scale_is_too_small_error,
-)
+from .dist import cleanup_dist, get_rank, get_world_size, get_local_rank, setup_dist
+
+from .log import setup_logger, MetricsTracker, get_env_info
 
 from .utils import (
     AttributeDict,
-    MetricsTracker,
     add_eos,
     add_sos,
     get_parameter_groups_with_lrs,
     make_pad_mask,
+    is_module_available,
+    num_tokens,
+    token_ids_to_text,
     remove_punctuation,
-    setup_logger,
     store_transcripts,
     str2bool,
     time_warp,
+    tokenize_by_cjk_char,
     torch_autocast,
     write_error_stats,
-    SymbolTable
+    pad_sequences,
+    stack_states,
+    unstack_states,
+    SymbolTable,
+    raise_grad_scale_is_too_small_error,
 )

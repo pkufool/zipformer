@@ -19,7 +19,7 @@ import kaldifst
 from collections import defaultdict
 from typing import List, Optional, Tuple
 
-from zipformer.utils.utils import is_module_available
+from zipformer.utils import is_module_available
 
 
 class NgramLm:

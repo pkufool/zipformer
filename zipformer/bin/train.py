@@ -42,17 +42,14 @@ from ssentencepiece import Ssentencepiece
 from zipformer.modules.model import AsrModel
 from zipformer.modules import optim
 from zipformer.modules.optim import Eden, ScaledAdam
-from zipformer.utils.checkpoint import (
+
+from zipformer.utils import save_checkpoint as save_checkpoint_impl
+
+from zipformer.utils import (
     load_checkpoint,
     remove_checkpoints,
     save_checkpoint_with_global_batch_idx,
     update_averaged_model,
-)
-from zipformer.utils.checkpoint import save_checkpoint as save_checkpoint_impl
-
-# from zipformer.utils.hooks import register_inf_check_hooks
-# from zipformer.utils import diagnostics
-from zipformer.utils.utils import (
     cleanup_dist,
     setup_dist,
     get_env_info,
@@ -1408,9 +1405,9 @@ def run(local_rank, world_size, args):
 
     training_sets = params.training_sets
     training_weights = None
-    assert (
-        training_sets is not None and len(training_sets) > 0
-    ), "training_sets must be provided"
+    assert training_sets is not None and len(training_sets) > 0, (
+        "training_sets must be provided"
+    )
     if params.training_weights is not None:
         training_weights = list(map(float, params.training_weights.split(",")))
         assert len(training_weights) == len(training_sets)

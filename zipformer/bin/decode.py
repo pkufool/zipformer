@@ -48,13 +48,11 @@ from zipformer.decode.search import (
     ctc_prefix_beam_search,
 )
 from zipformer.decode.post_processing import gigaspeech_post_processing
-from zipformer.utils.checkpoint import (
+from zipformer.utils import (
     average_checkpoints,
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
-)
-from zipformer.utils.utils import (
     AttributeDict,
     LOG_EPS,
     setup_logger,
@@ -552,9 +550,7 @@ def main():
         key, path = item.split(",")
         test_sets[key] = path
 
-    feature_extractor = Fbank(
-        sample_rate=params.sample_rate, n_mels=params.feature_dim
-    )
+    feature_extractor = Fbank(sample_rate=params.sample_rate, n_mels=params.feature_dim)
 
     for test_set, manifest in test_sets.items():
         test_dl = ATDataloader(

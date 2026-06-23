@@ -23,7 +23,7 @@ from typing import List, Optional
 import torch
 from zipformer.modules.label_smoothing import LabelSmoothingLoss
 from zipformer.modules.scaling import penalize_abs_values_gt
-from zipformer.utils.utils import make_pad_mask, pad_sequences
+from zipformer.utils import make_pad_mask, pad_sequences
 
 
 class AttentionDecoderModel(torch.nn.Module):
@@ -187,7 +187,9 @@ class TransformerDecoder(torch.nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.embed = torch.nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.embed = torch.nn.Embedding(
+            num_embeddings=vocab_size, embedding_dim=d_model
+        )
 
         # Absolute positional encoding
         self.pos = PositionalEncoding(d_model, dropout_rate=0.1)

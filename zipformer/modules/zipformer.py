@@ -40,7 +40,7 @@ from zipformer.modules.scaling import (
     penalize_abs_values_gt,
     softmax,
 )
-from zipformer.utils.utils import torch_autocast
+from zipformer.utils import torch_autocast
 
 
 class Zipformer(torch.nn.Module):
@@ -1352,9 +1352,9 @@ class SimpleDownsample(torch.nn.Module):
         pad = d_seq_len * ds - seq_len
 
         if self.causal and torch.jit.is_tracing():
-            assert (
-                pad == 0
-            ), f"pad should be zero for exporting streaming models. Given {pad}"
+            assert pad == 0, (
+                f"pad should be zero for exporting streaming models. Given {pad}"
+            )
 
         # If we are exporting a streaming model, then we skip the if statement
         if not self.causal or not torch.jit.is_tracing():
@@ -2362,9 +2362,9 @@ class ConvolutionModule(torch.nn.Module):
             and chunk_size >= 0
         ):
             # Not support exporting a model for simulated streaming decoding
-            assert (
-                self.causal
-            ), "Must initialize model with causal=True if you use chunk_size"
+            assert self.causal, (
+                "Must initialize model with causal=True if you use chunk_size"
+            )
             x = self.depthwise_conv(x, chunk_size=chunk_size)
         else:
             x = self.depthwise_conv(x)

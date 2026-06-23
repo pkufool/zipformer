@@ -15,16 +15,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import argparse
-import collections
 import json
 import logging
 import math
-import os
 import pathlib
 import random
 import warnings
 import re
+
 from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -35,50 +35,46 @@ from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
 
 import kaldialign
 import torch
-import torch.distributed as dist
+from torch import distributed as dist
 from lhotse.dataset.signal_transforms import time_warp as time_warp_impl
 from packaging import version
-from torch.utils.tensorboard import SummaryWriter
 
-import socket
-import subprocess
-import sys
-
-from torch import distributed as dist
 
 LOG_EPS = math.log(1e-10)
 Pathlike = Union[str, Path]
 TORCH_VERSION = version.parse(torch.__version__)
 
-Symbol = TypeVar('Symbol')
+Symbol = TypeVar("Symbol")
+
 
 # Disable __repr__ otherwise it could freeze e.g. Jupyter.
 @dataclass(repr=False)
 class SymbolTable(Generic[Symbol]):
-    '''SymbolTable that maps symbol IDs, found on the FSA arcs to
+    """SymbolTable that maps symbol IDs, found on the FSA arcs to
     actual objects. These objects can be arbitrary Python objects
     that can serve as keys in a dictionary (i.e. they need to be
     hashable and immutable).
 
     The SymbolTable can only be read to/written from disk if the
     symbols are strings.
-    '''
+    """
+
     _id2sym: Dict[int, Symbol] = field(default_factory=dict)
-    '''Map an integer to a symbol.
-    '''
+    """Map an integer to a symbol.
+    """
 
     _sym2id: Dict[Symbol, int] = field(default_factory=dict)
-    '''Map a symbol to an integer.
-    '''
+    """Map a symbol to an integer.
+    """
 
     _next_available_id: int = 1
-    '''A helper internal field that helps adding new symbols
+    """A helper internal field that helps adding new symbols
     to the table efficiently.
-    '''
+    """
 
-    eps: Symbol = '<eps>'
-    '''Null symbol, always mapped to index 0.
-    '''
+    eps: Symbol = "<eps>"
+    """Null symbol, always mapped to index 0.
+    """
 
     def __post_init__(self):
         for idx, sym in self._id2sym.items():
@@ -99,8 +95,8 @@ class SymbolTable(Generic[Symbol]):
         self._next_available_id = max(self._id2sym) + 1
 
     @staticmethod
-    def from_str(s: str) -> 'SymbolTable':
-        '''Build a symbol table from a string.
+    def from_str(s: str) -> "SymbolTable":
+        """Build a symbol table from a string.
 
         The string consists of lines. Every line has two fields separated
         by space(s), tab(s) or both. The first field is the symbol and the
@@ -111,29 +107,30 @@ class SymbolTable(Generic[Symbol]):
             The input string with the format described above.
         Returns:
           An instance of :class:`SymbolTable`.
-        '''
+        """
         id2sym: Dict[int, str] = dict()
         sym2id: Dict[str, int] = dict()
 
-        for line in s.split('\n'):
+        for line in s.split("\n"):
             fields = line.split()
             if len(fields) == 0:
                 continue  # skip empty lines
-            assert len(fields) == 2, \
-                    f'Expect a line with 2 fields. Given: {len(fields)}'
+            assert len(fields) == 2, (
+                f"Expect a line with 2 fields. Given: {len(fields)}"
+            )
             sym, idx = fields[0], int(fields[1])
-            assert sym not in sym2id, f'Duplicated symbol {sym}'
-            assert idx not in id2sym, f'Duplicated id {idx}'
+            assert sym not in sym2id, f"Duplicated symbol {sym}"
+            assert idx not in id2sym, f"Duplicated id {idx}"
             id2sym[idx] = sym
             sym2id[sym] = idx
 
-        eps = id2sym.get(0, '<eps>')
+        eps = id2sym.get(0, "<eps>")
 
         return SymbolTable(_id2sym=id2sym, _sym2id=sym2id, eps=eps)
 
     @staticmethod
-    def from_file(filename: str) -> 'SymbolTable':
-        '''Build a symbol table from file.
+    def from_file(filename: str) -> "SymbolTable":
+        """Build a symbol table from file.
 
         Every line in the symbol table file has two fields separated by
         space(s), tab(s) or both. The following is an example file:
@@ -152,23 +149,23 @@ class SymbolTable(Generic[Symbol]):
         Returns:
           An instance of :class:`SymbolTable`.
 
-        '''
-        with open(filename, 'r', encoding='utf-8') as f:
+        """
+        with open(filename, "r", encoding="utf-8") as f:
             return SymbolTable.from_str(f.read().strip())
 
     def to_str(self) -> str:
-        '''
+        """
         Returns:
           Return a string representation of this object. You can pass
           it to the method ``from_str`` to recreate an identical object.
-        '''
-        s = ''
+        """
+        s = ""
         for idx, symbol in sorted(self._id2sym.items()):
-            s += f'{symbol} {idx}\n'
+            s += f"{symbol} {idx}\n"
         return s
 
     def to_file(self, filename: str):
-        '''Serialize the SymbolTable to a file.
+        """Serialize the SymbolTable to a file.
 
         Every line in the symbol table file has two fields separated by
         space(s), tab(s) or both. The following is an example file:
@@ -183,13 +180,13 @@ class SymbolTable(Generic[Symbol]):
         Args:
           filename:
             Name of the symbol table file. Its format is documented above.
-        '''
-        with open(filename, 'w') as f:
+        """
+        with open(filename, "w") as f:
             for idx, symbol in sorted(self._id2sym.items()):
                 print(symbol, idx, file=f)
 
     def add(self, symbol: Symbol, index: Optional[int] = None) -> int:
-        '''Add a new symbol to the SymbolTable.
+        """Add a new symbol to the SymbolTable.
 
         Args:
             symbol:
@@ -200,7 +197,7 @@ class SymbolTable(Generic[Symbol]):
 
         Returns:
             The int id to which the symbol has been assigned.
-        '''
+        """
         # Already in the table? Return its ID.
         if symbol in self._sym2id:
             return self._sym2id[symbol]
@@ -209,8 +206,10 @@ class SymbolTable(Generic[Symbol]):
             index = self._next_available_id
         # Specific ID provided but not available.
         if index in self._id2sym:
-            raise ValueError(f"Cannot assign id '{index}' to '{symbol}' - "
-                             f"already occupied by {self._id2sym[index]}")
+            raise ValueError(
+                f"Cannot assign id '{index}' to '{symbol}' - "
+                f"already occupied by {self._id2sym[index]}"
+            )
         self._sym2id[symbol] = index
         self._id2sym[index] = symbol
 
@@ -221,7 +220,7 @@ class SymbolTable(Generic[Symbol]):
         return index
 
     def get(self, k: Union[int, Symbol]) -> Union[Symbol, int]:
-        '''Get a symbol for an id or get an id for a symbol
+        """Get a symbol for an id or get an id for a symbol
 
         Args:
           k:
@@ -231,14 +230,14 @@ class SymbolTable(Generic[Symbol]):
 
         Returns:
           An id or a symbol depending on the given `k`.
-        '''
+        """
         if isinstance(k, int):
             return self._id2sym[k]
         else:
             return self._sym2id[k]
 
-    def merge(self, other: 'SymbolTable') -> 'SymbolTable':
-        '''Create a union of two SymbolTables.
+    def merge(self, other: "SymbolTable") -> "SymbolTable":
+        """Create a union of two SymbolTables.
         Raises an AssertionError if the same IDs are occupied by
         different symbols.
 
@@ -248,7 +247,7 @@ class SymbolTable(Generic[Symbol]):
 
         Returns:
             A new symbol table.
-        '''
+        """
         self._check_compatible(other)
 
         id2sym = {**self._id2sym, **other._id2sym}
@@ -256,22 +255,27 @@ class SymbolTable(Generic[Symbol]):
 
         return SymbolTable(_id2sym=id2sym, _sym2id=sym2id, eps=self.eps)
 
-    def _check_compatible(self, other: 'SymbolTable') -> None:
+    def _check_compatible(self, other: "SymbolTable") -> None:
         # Epsilon compatibility
-        assert self.eps == other.eps, f'Mismatched epsilon symbol: ' \
-                                      f'{self.eps} != {other.eps}'
+        assert self.eps == other.eps, (
+            f"Mismatched epsilon symbol: {self.eps} != {other.eps}"
+        )
         # IDs compatibility
         common_ids = set(self._id2sym).intersection(other._id2sym)
         for idx in common_ids:
-            assert self[idx] == other[idx], f'ID conflict for id: {idx}, ' \
-                                            f'self[idx] = "{self[idx]}", ' \
-                                            f'other[idx] = "{other[idx]}"'
+            assert self[idx] == other[idx], (
+                f"ID conflict for id: {idx}, "
+                f'self[idx] = "{self[idx]}", '
+                f'other[idx] = "{other[idx]}"'
+            )
         # Symbols compatibility
         common_symbols = set(self._sym2id).intersection(other._sym2id)
         for sym in common_symbols:
-            assert self[sym] == other[sym], f'ID conflict for id: {sym}, ' \
-                                            f'self[sym] = "{self[sym]}", ' \
-                                            f'other[sym] = "{other[sym]}"'
+            assert self[sym] == other[sym], (
+                f"ID conflict for id: {sym}, "
+                f'self[sym] = "{self[sym]}", '
+                f'other[sym] = "{other[sym]}"'
+            )
 
     def __getitem__(self, item: Union[int, Symbol]) -> Union[Symbol, int]:
         return self.get(item)
@@ -285,7 +289,7 @@ class SymbolTable(Generic[Symbol]):
     def __len__(self) -> int:
         return len(self._id2sym)
 
-    def __eq__(self, other: 'SymbolTable') -> bool:
+    def __eq__(self, other: "SymbolTable") -> bool:
         if len(self) != len(other):
             return False
 
@@ -297,17 +301,16 @@ class SymbolTable(Generic[Symbol]):
 
     @property
     def ids(self) -> List[int]:
-        '''Returns a list of integer IDs corresponding to the symbols.
-        '''
+        """Returns a list of integer IDs corresponding to the symbols."""
         ans = list(self._id2sym.keys())
         ans.sort()
         return ans
 
     @property
     def symbols(self) -> List[Symbol]:
-        '''Returns a list of symbols (e.g., strings) corresponding to
+        """Returns a list of symbols (e.g., strings) corresponding to
         the integer IDs.
-        '''
+        """
         ans = list(self._sym2id.keys())
         ans.sort()
         return ans
@@ -331,6 +334,22 @@ def num_tokens(
     if 0 in ans:
         num_tokens -= 1
     return num_tokens
+
+
+def token_ids_to_text(token_ids: List[int], token_table: SymbolTable) -> str:
+    """Convert token IDs to text using a SymbolTable.
+
+    Supports byte-level BPE tokens in the format <0xNN>.
+    """
+    text = b""
+    for i in token_ids:
+        token = token_table[i]
+        if len(token) >= 4 and token[:3] == "<0x" and token[-1] == ">":
+            byte_val = int(token[1:-1], base=16)
+            text += byte_val.to_bytes(1, byteorder="little")
+        else:
+            text += token.encode(encoding="utf-8")
+    return text.decode(encoding="utf-8").replace("▁", " ").strip()
 
 
 def remove_punctuation(s: str) -> str:
@@ -357,43 +376,6 @@ def str2bool(v):
     if v.lower() in ("no", "false", "f", "n", "0"):
         return False
     raise argparse.ArgumentTypeError("Boolean value expected.")
-
-
-def setup_logger(
-    log_filename: Pathlike, log_level: str = "info", use_console: bool = True
-) -> None:
-    now = datetime.now()
-    date_time = now.strftime("%Y-%m-%d-%H-%M-%S")
-    if dist.is_available() and dist.is_initialized():
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
-        formatter = f"%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] ({rank}/{world_size}) %(message)s"
-        log_filename = f"{log_filename}-{date_time}-{rank}"
-    else:
-        formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
-        log_filename = f"{log_filename}-{date_time}"
-
-    os.makedirs(os.path.dirname(log_filename), exist_ok=True)
-
-    level = {
-        "debug": logging.DEBUG,
-        "info": logging.INFO,
-        "warning": logging.WARNING,
-        "critical": logging.CRITICAL,
-    }.get(log_level, logging.ERROR)
-
-    logging.basicConfig(
-        filename=log_filename,
-        format=formatter,
-        level=level,
-        filemode="w",
-        force=True,
-    )
-    if use_console:
-        console = logging.StreamHandler()
-        console.setLevel(level)
-        console.setFormatter(logging.Formatter(formatter))
-        logging.getLogger("").addHandler(console)
 
 
 class AttributeDict(dict):
@@ -488,98 +470,6 @@ def write_error_stats(
     return float(tot_err_rate)
 
 
-class MetricsTracker(collections.defaultdict):
-    def __init__(self):
-        # Passing the type 'int' to the base-class constructor
-        # makes undefined items default to int() which is zero.
-        # This class will play a role as metrics tracker.
-        # It can record many metrics, including but not limited to loss.
-        super(MetricsTracker, self).__init__(int)
-
-    def __add__(self, other: "MetricsTracker") -> "MetricsTracker":
-        ans = MetricsTracker()
-        for k, v in self.items():
-            ans[k] = v
-        for k, v in other.items():
-            if v - v == 0:
-                ans[k] = ans[k] + v
-        return ans
-
-    def __mul__(self, alpha: float) -> "MetricsTracker":
-        ans = MetricsTracker()
-        for k, v in self.items():
-            ans[k] = v * alpha
-        return ans
-
-    def __str__(self) -> str:
-        ans_frames = ""
-        ans_utterances = ""
-        for k, v in self.norm_items():
-            norm_value = "%.4g" % v
-            if "utt_" not in k:
-                ans_frames += str(k) + "=" + str(norm_value) + ", "
-            else:
-                ans_utterances += str(k) + "=" + str(norm_value)
-                if k == "utt_duration":
-                    ans_utterances += " frames, "
-                elif k == "utt_pad_proportion":
-                    ans_utterances += ", "
-                else:
-                    raise ValueError(f"Unexpected key: {k}")
-        frames = "%.2f" % self["frames"]
-        ans_frames += "over " + str(frames) + " frames. "
-        if ans_utterances != "":
-            utterances = "%.2f" % self["utterances"]
-            ans_utterances += "over " + str(utterances) + " utterances."
-
-        return ans_frames + ans_utterances
-
-    def norm_items(self) -> List[Tuple[str, float]]:
-        """
-        Returns a list of pairs, like:
-          [('ctc_loss', 0.1), ('att_loss', 0.07)]
-        """
-        num_frames = self["frames"] if "frames" in self else 1
-        num_utterances = self["utterances"] if "utterances" in self else 1
-        ans = []
-        for k, v in self.items():
-            if k == "frames" or k == "utterances":
-                continue
-            norm_value = (
-                float(v) / num_frames if "utt_" not in k else float(v) / num_utterances
-            )
-            ans.append((k, norm_value))
-        return ans
-
-    def reduce(self, device):
-        """
-        Reduce using torch.distributed, which I believe ensures that
-        all processes get the total.
-        """
-        keys = sorted(self.keys())
-        s = torch.tensor([float(self[k]) for k in keys], device=device)
-        dist.all_reduce(s, op=dist.ReduceOp.SUM)
-        for k, v in zip(keys, s.cpu().tolist()):
-            self[k] = v
-
-    def write_summary(
-        self,
-        tb_writer: SummaryWriter,
-        prefix: str,
-        batch_idx: int,
-    ) -> None:
-        """Add logging information to a TensorBoard writer.
-
-        Args:
-            tb_writer: a TensorBoard writer
-            prefix: a prefix for the name of the loss, e.g. "train/valid_",
-                or "train/current_"
-            batch_idx: The current batch index, used as the x-axis of the plot.
-        """
-        for k, v in self.norm_items():
-            tb_writer.add_scalar(prefix + k, v, batch_idx)
-
-
 # `is_module_available` is copied from
 # https://github.com/pytorch/audio/blob/6bad3a66a7a1c7cc05755e9ee5931b7391d2b94c/torchaudio/_internal/module_utils.py#L9
 def is_module_available(*modules: str) -> bool:
@@ -605,6 +495,151 @@ def make_pad_mask(
     if pad_left:
         return expanded_lengths < (max_len - lengths).unsqueeze(1)
     return expanded_lengths >= lengths.unsqueeze(-1)
+
+
+def stack_states(state_list: List[List[torch.Tensor]]) -> List[torch.Tensor]:
+    """Stack list of zipformer states that correspond to separate utterances
+    into a single emformer state, so that it can be used as an input for
+    zipformer when those utterances are formed into a batch.
+
+    Args:
+      state_list:
+        Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance. For element-n,
+        state_list[n] is a list of cached tensors of all encoder layers. For layer-i,
+        state_list[n][i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1,
+        cached_val2, cached_conv1, cached_conv2).
+        state_list[n][-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+        state_list[n][-1] is processed_lens of shape (batch,), which records the number
+        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Note:
+      It is the inverse of :func:`unstack_states`.
+    """
+    batch_size = len(state_list)
+    assert (len(state_list[0]) - 2) % 6 == 0, len(state_list[0])
+    tot_num_layers = (len(state_list[0]) - 2) // 6
+
+    batch_states = []
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key = torch.cat(
+            [state_list[i][layer_offset] for i in range(batch_size)], dim=1
+        )
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn = torch.cat(
+            [state_list[i][layer_offset + 1] for i in range(batch_size)], dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1 = torch.cat(
+            [state_list[i][layer_offset + 2] for i in range(batch_size)], dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2 = torch.cat(
+            [state_list[i][layer_offset + 3] for i in range(batch_size)], dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1 = torch.cat(
+            [state_list[i][layer_offset + 4] for i in range(batch_size)], dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2 = torch.cat(
+            [state_list[i][layer_offset + 5] for i in range(batch_size)], dim=0
+        )
+        batch_states += [
+            cached_key,
+            cached_nonlin_attn,
+            cached_val1,
+            cached_val2,
+            cached_conv1,
+            cached_conv2,
+        ]
+
+    cached_embed_left_pad = torch.cat(
+        [state_list[i][-2] for i in range(batch_size)], dim=0
+    )
+    batch_states.append(cached_embed_left_pad)
+
+    processed_lens = torch.cat([state_list[i][-1] for i in range(batch_size)], dim=0)
+    batch_states.append(processed_lens)
+
+    return batch_states
+
+
+def unstack_states(batch_states: List[torch.Tensor]) -> List[List[torch.Tensor]]:
+    """Unstack the zipformer state corresponding to a batch of utterances
+    into a list of states, where the i-th entry is the state from the i-th
+    utterance in the batch.
+
+    Note:
+      It is the inverse of :func:`stack_states`.
+
+    Args:
+        batch_states: A list of cached tensors of all encoder layers. For layer-i,
+          states[i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1, cached_val2,
+          cached_conv1, cached_conv2).
+          state_list[-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+          states[-1] is processed_lens of shape (batch,), which records the number
+          of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Returns:
+        state_list: A list of list. Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance.
+    """
+    assert (len(batch_states) - 2) % 6 == 0, len(batch_states)
+    tot_num_layers = (len(batch_states) - 2) // 6
+
+    processed_lens = batch_states[-1]
+    batch_size = processed_lens.shape[0]
+
+    state_list = [[] for _ in range(batch_size)]
+
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key_list = batch_states[layer_offset].chunk(chunks=batch_size, dim=1)
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn_list = batch_states[layer_offset + 1].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1_list = batch_states[layer_offset + 2].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2_list = batch_states[layer_offset + 3].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1_list = batch_states[layer_offset + 4].chunk(
+            chunks=batch_size, dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2_list = batch_states[layer_offset + 5].chunk(
+            chunks=batch_size, dim=0
+        )
+        for i in range(batch_size):
+            state_list[i] += [
+                cached_key_list[i],
+                cached_nonlin_attn_list[i],
+                cached_val1_list[i],
+                cached_val2_list[i],
+                cached_conv1_list[i],
+                cached_conv2_list[i],
+            ]
+
+    cached_embed_left_pad_list = batch_states[-2].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(cached_embed_left_pad_list[i])
+
+    processed_lens_list = batch_states[-1].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(processed_lens_list[i])
+
+    return state_list
 
 
 def get_parameter_groups_with_lrs(
@@ -677,86 +712,6 @@ def time_warp(
     return features
 
 
-def get_git_sha1():
-    try:
-        git_commit = (
-            subprocess.run(
-                ["git", "rev-parse", "--short", "HEAD"],
-                check=True,
-                stdout=subprocess.PIPE,
-            )
-            .stdout.decode()
-            .rstrip("\n")
-            .strip()
-        )
-        dirty_commit = (
-            len(
-                subprocess.run(
-                    ["git", "diff", "--shortstat"],
-                    check=True,
-                    stdout=subprocess.PIPE,
-                )
-                .stdout.decode()
-                .rstrip("\n")
-                .strip()
-            )
-            > 0
-        )
-        git_commit = git_commit + "-dirty" if dirty_commit else git_commit + "-clean"
-    except:  # noqa
-        return None
-
-    return git_commit
-
-
-def get_git_date():
-    try:
-        git_date = (
-            subprocess.run(
-                ["git", "log", "-1", "--format=%ad", "--date=local"],
-                check=True,
-                stdout=subprocess.PIPE,
-            )
-            .stdout.decode()
-            .rstrip("\n")
-            .strip()
-        )
-    except:  # noqa
-        return None
-
-    return git_date
-
-
-def get_git_branch_name():
-    try:
-        git_date = (
-            subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                check=True,
-                stdout=subprocess.PIPE,
-            )
-            .stdout.decode()
-            .rstrip("\n")
-            .strip()
-        )
-    except:  # noqa
-        return None
-
-    return git_date
-
-
-def get_env_info() -> Dict[str, Any]:
-    """Get the environment information."""
-    return {
-        "torch-version": str(torch.__version__),
-        "torch-cuda-available": torch.cuda.is_available(),
-        "torch-cuda-version": torch.version.cuda,
-        "python-version": ".".join(sys.version.split(".")[:2]),
-        "hostname": socket.gethostname(),
-        "IP address": socket.gethostbyname(socket.gethostname()),
-    }
-
-
 def raise_grad_scale_is_too_small_error(cur_grad_scale: float):
     raise RuntimeError(
         f"""
@@ -787,54 +742,6 @@ def raise_grad_scale_is_too_small_error(cur_grad_scale: float):
         ========================================================
         """
     )
-
-
-def setup_dist(
-    rank=None, world_size=None, master_port=None, use_ddp_launch=False, master_addr=None
-):
-    """
-    rank and world_size are used only if use_ddp_launch is False.
-    """
-    if "MASTER_ADDR" not in os.environ:
-        os.environ["MASTER_ADDR"] = (
-            "localhost" if master_addr is None else str(master_addr)
-        )
-
-    if "MASTER_PORT" not in os.environ:
-        os.environ["MASTER_PORT"] = "12354" if master_port is None else str(master_port)
-
-    if use_ddp_launch is False:
-        dist.init_process_group("nccl", rank=rank, world_size=world_size)
-        local_device_id = rank % torch.cuda.device_count()
-        torch.cuda.set_device(local_device_id)
-    else:
-        dist.init_process_group("nccl")
-
-
-def cleanup_dist():
-    dist.destroy_process_group()
-
-
-def get_world_size():
-    if "WORLD_SIZE" in os.environ:
-        return int(os.environ["WORLD_SIZE"])
-    if dist.is_available() and dist.is_initialized():
-        return dist.get_world_size()
-    else:
-        return 1
-
-
-def get_rank():
-    if "RANK" in os.environ:
-        return int(os.environ["RANK"])
-    elif dist.is_available() and dist.is_initialized():
-        return dist.get_rank()
-    else:
-        return 0
-
-
-def get_local_rank():
-    return int(os.environ.get("LOCAL_RANK", 0))
 
 
 def add_sos(seq: List[List[int]], sos_id: int) -> List[List[int]]:

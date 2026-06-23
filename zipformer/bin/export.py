@@ -24,119 +24,42 @@ Unified export script for Zipformer models.
 
 Supports exporting to PyTorch state_dict, TorchScript, and ONNX formats,
 for both streaming and non-streaming models, with transducer or CTC heads.
-
-Usage examples:
-
-(1) Export PyTorch state_dict:
-
-  python export.py \
-    --export-type torch \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9
-
-(2) Export TorchScript (non-streaming):
-
-  python export.py \
-    --export-type torch \
-    --jit true \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9
-
-(3) Export TorchScript (streaming):
-
-  python export.py \
-    --export-type torch \
-    --jit true \
-    --causal true \
-    --chunk-size 16 \
-    --left-context-frames 128 \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9
-
-(4) Export ONNX non-streaming transducer:
-
-  python export.py \
-    --export-type onnx \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9 \
-    --fp16 true
-
-(5) Export ONNX non-streaming CTC:
-
-  python export.py \
-    --export-type onnx \
-    --ctc true \
-    --use-transducer 0 \
-    --use-ctc 1 \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9
-
-(6) Export ONNX streaming transducer:
-
-  python export.py \
-    --export-type onnx \
-    --streaming true \
-    --causal true \
-    --chunk-size 16 \
-    --left-context-frames 128 \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9 \
-    --fp16 true
-
-(7) Export ONNX streaming CTC:
-
-  python export.py \
-    --export-type onnx \
-    --streaming true \
-    --ctc true \
-    --causal true \
-    --chunk-size 16 \
-    --left-context-frames 128 \
-    --use-ctc 1 \
-    --exp-dir ./exp \
-    --bpe-model data/lang_bpe_500/bpe.model \
-    --epoch 30 \
-    --avg 9
 """
 
 import argparse
 import logging
 
 from pathlib import Path
-from typing import Dict, List, Tuple
-
+from typing import Dict
+from copy import deepcopy
 
 import torch
-
 import onnx
 
 from onnxconverter_common import float16
-
-from ssentencepiece import Ssentencepiece
 from onnxruntime.quantization import QuantType, quantize_dynamic
+from ssentencepiece import Ssentencepiece
 
-from zipformer.modules.scaling_converter import convert_scaled_to_non_scaled
 from zipformer.bin.train import add_model_arguments, get_model, get_params
-
-from zipformer.utils.checkpoint import (
+from zipformer.utils import (
+    SymbolTable,
     average_checkpoints,
     average_checkpoints_with_averaged_model,
     find_checkpoints,
     load_checkpoint,
+    str2bool,
+    num_tokens,
 )
-from zipformer.utils.utils import make_pad_mask, str2bool, SymbolTable, num_tokens
+from zipformer.modules.model import (
+    EncoderWrapper,
+    StreamingEncoderWrapper,
+    OnnxEncoderWrapper,
+    OnnxDecoderWrapper,
+    OnnxJoinerWrapper,
+    OnnxCtcWrapper,
+    OnnxStreamingEncoderWrapper,
+    OnnxStreamingCtcWrapper,
+)
 
 
 def get_parser():
@@ -145,32 +68,10 @@ def get_parser():
     )
 
     parser.add_argument(
-        "--export-type",
-        type=str,
-        default="torch",
-        choices=["torch", "onnx"],
-        help="Export format: 'torch' for state_dict/TorchScript, 'onnx' for ONNX.",
-    )
-
-    parser.add_argument(
-        "--streaming",
-        type=str2bool,
-        default=False,
-        help="Whether to export a streaming model (for ONNX export).",
-    )
-
-    parser.add_argument(
-        "--ctc",
-        type=str2bool,
-        default=False,
-        help="Whether to export the CTC head instead of transducer (for ONNX export).",
-    )
-
-    parser.add_argument(
         "--epoch",
         type=int,
         default=30,
-        help="""It specifies the checkpoint to use for decoding.
+        help="""It specifies the checkpoint to use for exporting.
         Note: Epoch counts from 1.
         You can specify --avg to use more checkpoints for model averaging.""",
     )
@@ -217,44 +118,56 @@ def get_parser():
     parser.add_argument(
         "--bpe-model",
         type=str,
-        default="data/lang_bpe_500/bpe.model",
+        default="data/bpe.model",
         help="Path to the BPE model",
     )
 
     parser.add_argument(
         "--tokens",
         type=str,
-        default="data/lang_bpe_500/tokens.txt",
+        default="data/tokens.txt",
         help="Path to the tokens file",
     )
 
     parser.add_argument(
-        "--jit",
+        "--export-jit",
         type=str2bool,
-        default=False,
-        help="""True to save a model after applying torch.jit.script (torch export only).
-        It will generate a file named jit_script.pt.
+        default=True,
+        help="""True to save a model after applying torch.jit.script.
+        It will generate a file named jit_model.pt.
+        """,
+    )
+
+    parser.add_argument(
+        "--export-onnx",
+        type=str2bool,
+        default=True,
+        help="""
+        Whether to export the model in ONNX format.
+        For ctc model, it will generate a file named model.onnx.
+        For transducer model, it will generate three files named encoder.onnx,
+        decoder.onnx and joiner.onnx.
         """,
     )
 
     parser.add_argument(
         "--enable-int8-quantization",
         type=str2bool,
-        default=False,
+        default=True,
         help="Whether to also export int8 quantization models (ONNX export only).",
     )
 
     parser.add_argument(
-        "--fp16",
+        "--export-fp16",
         type=str2bool,
-        default=False,
+        default=True,
         help="Whether to also export models in fp16 (ONNX export only).",
     )
 
     parser.add_argument(
         "--dynamic-batch",
-        type=int,
-        default=1,
+        type=str2bool,
+        default=True,
         help="1 to support dynamic batch size. 0 to support only batch size == 1 "
         "(streaming ONNX export only).",
     )
@@ -266,145 +179,31 @@ def get_parser():
         help="Set it to true for model file size > 2GB (streaming ONNX export only).",
     )
 
-    parser.add_argument(
-        "--use-whisper-features",
-        type=str2bool,
-        default=False,
-        help="Whether to use whisper features (streaming ONNX export only).",
-    )
-
     add_model_arguments(parser)
-
     return parser
 
 
-# ==============================================================================
-# Torch Export (state_dict / TorchScript)
-# ==============================================================================
-
-
-class EncoderModel(torch.nn.Module):
-    """A wrapper for encoder and encoder_embed (non-streaming JIT export)."""
-
-    def __init__(
-        self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module
-    ) -> None:
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-
-    def forward(
-        self, features: torch.Tensor, feature_lengths: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, x_lens = self.encoder_embed(features, feature_lengths)
-        src_key_padding_mask = make_pad_mask(x_lens)
-        x = x.permute(1, 0, 2)
-        encoder_out, encoder_out_lens = self.encoder(x, x_lens, src_key_padding_mask)
-        encoder_out = encoder_out.permute(1, 0, 2)
-        return encoder_out, encoder_out_lens
-
-
-class StreamingEncoderModel(torch.nn.Module):
-    """A wrapper for encoder and encoder_embed (streaming JIT export)."""
-
-    def __init__(
-        self, encoder: torch.nn.Module, encoder_embed: torch.nn.Module
-    ) -> None:
-        super().__init__()
-        assert len(encoder.chunk_size) == 1, encoder.chunk_size
-        assert len(encoder.left_context_frames) == 1, encoder.left_context_frames
-        self.chunk_size = encoder.chunk_size[0]
-        self.left_context_len = encoder.left_context_frames[0]
-        self.pad_length = 7 + 2 * 3
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-
-    def forward(
-        self,
-        features: torch.Tensor,
-        feature_lengths: torch.Tensor,
-        states: List[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
-        chunk_size = self.chunk_size
-        left_context_len = self.left_context_len
-
-        cached_embed_left_pad = states[-2]
-        x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=features,
-            x_lens=feature_lengths,
-            cached_left_pad=cached_embed_left_pad,
-        )
-        assert x.size(1) == chunk_size, (x.size(1), chunk_size)
-
-        src_key_padding_mask = make_pad_mask(x_lens)
-
-        processed_mask = torch.arange(left_context_len, device=x.device).expand(
-            x.size(0), left_context_len
-        )
-        processed_lens = states[-1]
-        processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
-        new_processed_lens = processed_lens + x_lens
-
-        src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
-
-        x = x.permute(1, 0, 2)
-        encoder_states = states[:-2]
-
-        (
-            encoder_out,
-            encoder_out_lens,
-            new_encoder_states,
-        ) = self.encoder.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            states=encoder_states,
-            src_key_padding_mask=src_key_padding_mask,
-        )
-        encoder_out = encoder_out.permute(1, 0, 2)
-
-        new_states = new_encoder_states + [
-            new_cached_embed_left_pad,
-            new_processed_lens,
-        ]
-        return encoder_out, encoder_out_lens, new_states
-
-    @torch.jit.export
-    def get_init_states(
-        self,
-        batch_size: int = 1,
-        device: torch.device = torch.device("cpu"),
-    ) -> List[torch.Tensor]:
-        states = self.encoder.get_init_states(batch_size, device)
-        embed_states = self.encoder_embed.get_init_states(batch_size, device)
-        states.append(embed_states)
-        processed_lens = torch.zeros(batch_size, dtype=torch.int32, device=device)
-        states.append(processed_lens)
-        return states
-
-
 def export_torch(params, model):
-    """Export model as PyTorch state_dict or TorchScript."""
-    if params.jit is True:
-        convert_scaled_to_non_scaled(model, inplace=True)
+    """Export model as PyTorch state_dict and TorchScript."""
+
+    logging.info("Exporting model.state_dict()")
+    filename = params.exp_dir / f"model-{params.suffix}.pt"
+    torch.save({"model": model.state_dict()}, str(filename))
+    logging.info(f"Saved to {filename}")
+
+    if params.export_jit:
         model.__class__.forward = torch.jit.ignore(model.__class__.forward)
 
         if params.causal:
-            model.encoder = StreamingEncoderModel(model.encoder, model.encoder_embed)
-            chunk_size = model.encoder.chunk_size
-            left_context_len = model.encoder.left_context_len
-            filename = f"jit_model_chunk_{chunk_size}_left_{left_context_len}.pt"
+            model.encoder = StreamingEncoderWrapper(model.encoder, model.encoder_embed)
+            filename = f"jit_model-{params.suffix}.pt"
         else:
-            model.encoder = EncoderModel(model.encoder, model.encoder_embed)
-            filename = "jit_model.pt"
+            model.encoder = EncoderWrapper(model.encoder, model.encoder_embed)
+            filename = f"jit_model-{params.suffix}.pt"
 
-        logging.info("Using torch.jit.script")
+        logging.info("Export jit script model")
         model = torch.jit.script(model)
         model.save(str(params.exp_dir / filename))
-        logging.info(f"Saved to {filename}")
-    else:
-        logging.info("Not using torchscript. Export model.state_dict()")
-        filename = params.exp_dir / "model.pt"
-        torch.save({"model": model.state_dict()}, str(filename))
         logging.info(f"Saved to {filename}")
 
 
@@ -417,7 +216,6 @@ def add_meta_data(
     filename: str, meta_data: Dict[str, str], use_external_data: bool = False
 ):
     """Add meta data to an ONNX model. It is changed in-place."""
-
     filename = str(filename)
     model = onnx.load(filename)
     for key, value in meta_data.items():
@@ -453,68 +251,9 @@ def export_onnx_fp16_large_2gb(onnx_fp32_path, onnx_fp16_path):
     onnx.save_model(onnx_fp16_model, onnx_fp16_path)
 
 
-# ==============================================================================
-# ONNX Non-streaming Transducer
-# ==============================================================================
-
-
-class OnnxEncoder(torch.nn.Module):
-    """A wrapper for Zipformer and the encoder_proj from the joiner (non-streaming)."""
-
-    def __init__(self, encoder, encoder_embed, encoder_proj):
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.encoder_proj = encoder_proj
-
-    def forward(
-        self, x: torch.Tensor, x_lens: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, x_lens = self.encoder_embed(x, x_lens)
-        src_key_padding_mask = make_pad_mask(x_lens, x.shape[1])
-        x = x.permute(1, 0, 2)
-        encoder_out, encoder_out_lens = self.encoder(x, x_lens, src_key_padding_mask)
-        encoder_out = encoder_out.permute(1, 0, 2)
-        encoder_out = self.encoder_proj(encoder_out)
-        return encoder_out, encoder_out_lens
-
-
-class OnnxDecoder(torch.nn.Module):
-    """A wrapper for Decoder and the decoder_proj from the joiner."""
-
-    def __init__(self, decoder, decoder_proj):
-        super().__init__()
-        self.decoder = decoder
-        self.decoder_proj = decoder_proj
-
-    def forward(self, y: torch.Tensor) -> torch.Tensor:
-        need_pad = False
-        decoder_output = self.decoder(y, need_pad=need_pad)
-        decoder_output = decoder_output.squeeze(1)
-        output = self.decoder_proj(decoder_output)
-        return output
-
-
-class OnnxJoiner(torch.nn.Module):
-    """A wrapper for the joiner."""
-
-    def __init__(self, output_linear):
-        super().__init__()
-        self.output_linear = output_linear
-
-    def forward(
-        self, encoder_out: torch.Tensor, decoder_out: torch.Tensor
-    ) -> torch.Tensor:
-        logit = encoder_out + decoder_out
-        logit = self.output_linear(torch.tanh(logit))
-        return logit
-
-
 def _export_encoder_model_onnx(encoder_model, encoder_filename, opset_version=13):
     x = torch.zeros(1, 100, 80, dtype=torch.float32)
     x_lens = torch.tensor([100], dtype=torch.int64)
-
-    encoder_model = torch.jit.trace(encoder_model, (x, x_lens))
 
     torch.onnx.export(
         encoder_model,
@@ -547,6 +286,8 @@ def _export_decoder_model_onnx(
 ):
     context_size = decoder_model.decoder.context_size
     vocab_size = decoder_model.decoder.vocab_size
+    blank_id = decoder_model.decoder.blank_id
+    unk_id = getattr(decoder_model, "unk_id", blank_id)
 
     y = torch.zeros(10, context_size, dtype=torch.int64)
     decoder_model = torch.jit.script(decoder_model)
@@ -569,6 +310,8 @@ def _export_decoder_model_onnx(
     meta_data = {
         "context_size": str(context_size),
         "vocab_size": str(vocab_size),
+        "blank_id": str(blank_id),
+        "unk_id": str(unk_id),
     }
     add_meta_data(filename=decoder_filename, meta_data=meta_data)
 
@@ -604,77 +347,75 @@ def _export_joiner_model_onnx(
 
 def export_onnx_transducer(params, model):
     """Export non-streaming transducer model to ONNX."""
+    logging.info("Exporting non-streaming transducer model to ONNX")
 
-    encoder = OnnxEncoder(
+    encoder = OnnxEncoderWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         encoder_proj=model.joiner.encoder_proj,
     )
-    decoder = OnnxDecoder(
+    decoder = OnnxDecoderWrapper(
         decoder=model.decoder,
         decoder_proj=model.joiner.decoder_proj,
     )
-    joiner = OnnxJoiner(output_linear=model.joiner.output_linear)
+    joiner = OnnxJoinerWrapper(output_linear=model.joiner.output_linear)
 
     encoder_num_param = sum([p.numel() for p in encoder.parameters()])
     decoder_num_param = sum([p.numel() for p in decoder.parameters()])
     joiner_num_param = sum([p.numel() for p in joiner.parameters()])
     total_num_param = encoder_num_param + decoder_num_param + joiner_num_param
-    logging.info(f"encoder parameters: {encoder_num_param}")
-    logging.info(f"decoder parameters: {decoder_num_param}")
-    logging.info(f"joiner parameters: {joiner_num_param}")
-    logging.info(f"total parameters: {total_num_param}")
-
-    if params.iter > 0:
-        suffix = f"iter-{params.iter}"
-    else:
-        suffix = f"epoch-{params.epoch}"
-    suffix += f"-avg-{params.avg}"
+    logging.info(f"Encoder parameters: {encoder_num_param}")
+    logging.info(f"Decoder parameters: {decoder_num_param}")
+    logging.info(f"Joiner parameters: {joiner_num_param}")
+    logging.info(f"Total parameters: {total_num_param}")
 
     opset_version = 13
 
     logging.info("Exporting encoder")
-    encoder_filename = params.exp_dir / f"encoder-{suffix}.onnx"
+    encoder_filename = params.exp_dir / f"encoder-{params.suffix}.onnx"
     _export_encoder_model_onnx(encoder, encoder_filename, opset_version=opset_version)
     logging.info(f"Exported encoder to {encoder_filename}")
 
     logging.info("Exporting decoder")
-    decoder_filename = params.exp_dir / f"decoder-{suffix}.onnx"
+    decoder_filename = params.exp_dir / f"decoder-{params.suffix}.onnx"
     _export_decoder_model_onnx(decoder, decoder_filename, opset_version=opset_version)
     logging.info(f"Exported decoder to {decoder_filename}")
 
     logging.info("Exporting joiner")
-    joiner_filename = params.exp_dir / f"joiner-{suffix}.onnx"
+    joiner_filename = params.exp_dir / f"joiner-{params.suffix}.onnx"
     _export_joiner_model_onnx(joiner, joiner_filename, opset_version=opset_version)
     logging.info(f"Exported joiner to {joiner_filename}")
 
-    if params.fp16:
-        logging.info("Generate fp16 models")
-        encoder_filename_fp16 = params.exp_dir / f"encoder-{suffix}.fp16.onnx"
+    if params.export_fp16:
+        logging.info("Exporting fp16 models")
+        encoder_filename_fp16 = params.exp_dir / f"encoder-{params.suffix}.fp16.onnx"
         export_onnx_fp16(encoder_filename, encoder_filename_fp16)
-        decoder_filename_fp16 = params.exp_dir / f"decoder-{suffix}.fp16.onnx"
+        # export decoder in fp16 have some issues, disable it for now.
+        decoder_filename_fp16 = params.exp_dir / f"decoder-{params.suffix}.fp16.onnx"
         export_onnx_fp16(decoder_filename, decoder_filename_fp16)
-        joiner_filename_fp16 = params.exp_dir / f"joiner-{suffix}.fp16.onnx"
+        joiner_filename_fp16 = params.exp_dir / f"joiner-{params.suffix}.fp16.onnx"
         export_onnx_fp16(joiner_filename, joiner_filename_fp16)
 
-    logging.info("Generate int8 quantization models")
+    if params.enable_int8_quantization:
+        logging.info("Exporting int8 quantization models")
 
-    encoder_filename_int8 = params.exp_dir / f"encoder-{suffix}.int8.onnx"
-    quantize_dynamic(
-        model_input=encoder_filename,
-        model_output=encoder_filename_int8,
-        op_types_to_quantize=["MatMul"],
-        weight_type=QuantType.QInt8,
-    )
+        encoder_filename_int8 = params.exp_dir / f"encoder-{params.suffix}.int8.onnx"
+        quantize_dynamic(
+            model_input=encoder_filename,
+            model_output=encoder_filename_int8,
+            op_types_to_quantize=["MatMul"],
+            weight_type=QuantType.QInt8,
+        )
 
-    # We don't quantize the decoder since it may cause large accuracy drop.
-    joiner_filename_int8 = params.exp_dir / f"joiner-{suffix}.int8.onnx"
-    quantize_dynamic(
-        model_input=joiner_filename,
-        model_output=joiner_filename_int8,
-        op_types_to_quantize=["MatMul"],
-        weight_type=QuantType.QInt8,
-    )
+        # We don't quantize the decoder since it may cause large accuracy drop.
+
+        joiner_filename_int8 = params.exp_dir / f"joiner-{params.suffix}.int8.onnx"
+        quantize_dynamic(
+            model_input=joiner_filename,
+            model_output=joiner_filename_int8,
+            op_types_to_quantize=["MatMul"],
+            weight_type=QuantType.QInt8,
+        )
 
 
 # ==============================================================================
@@ -682,32 +423,9 @@ def export_onnx_transducer(params, model):
 # ==============================================================================
 
 
-class OnnxCtcModel(torch.nn.Module):
-    """A wrapper for encoder_embed, Zipformer, and ctc_output layer (non-streaming)."""
-
-    def __init__(self, encoder, encoder_embed, ctc_output):
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.ctc_output = ctc_output
-
-    def forward(
-        self, x: torch.Tensor, x_lens: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, x_lens = self.encoder_embed(x, x_lens)
-        src_key_padding_mask = make_pad_mask(x_lens)
-        x = x.permute(1, 0, 2)
-        encoder_out, log_probs_len = self.encoder(x, x_lens, src_key_padding_mask)
-        encoder_out = encoder_out.permute(1, 0, 2)
-        log_probs = self.ctc_output(encoder_out)
-        return log_probs, log_probs_len
-
-
 def _export_ctc_model_onnx(model, filename, opset_version=11):
     x = torch.zeros(1, 100, 80, dtype=torch.float32)
     x_lens = torch.tensor([100], dtype=torch.int64)
-
-    model = torch.jit.trace(model, (x, x_lens))
 
     torch.onnx.export(
         model,
@@ -737,35 +455,39 @@ def _export_ctc_model_onnx(model, filename, opset_version=11):
 
 def export_onnx_ctc(params, model):
     """Export non-streaming CTC model to ONNX."""
+    logging.info("Exporting non-streaming CTC model to ONNX")
 
-    ctc_model = OnnxCtcModel(
+    ctc_model = OnnxCtcWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         ctc_output=model.ctc_output,
     )
 
     num_param = sum([p.numel() for p in ctc_model.parameters()])
-    logging.info(f"num parameters: {num_param}")
+    logging.info(f"Total parameters: {num_param}")
 
     opset_version = 13
 
-    logging.info("Exporting ctc model")
-    filename = params.exp_dir / "model.onnx"
+    logging.info("Exporting CTC model")
+    filename = params.exp_dir / f"ctc-{params.suffix}.onnx"
     _export_ctc_model_onnx(ctc_model, filename, opset_version=opset_version)
     logging.info(f"Exported to {filename}")
 
-    logging.info("Generate int8 quantization models")
-    filename_int8 = params.exp_dir / "model.int8.onnx"
-    quantize_dynamic(
-        model_input=filename,
-        model_output=filename_int8,
-        op_types_to_quantize=["MatMul"],
-        weight_type=QuantType.QInt8,
-    )
-
-    if params.fp16:
-        filename_fp16 = params.exp_dir / "model.fp16.onnx"
+    if params.export_fp16:
+        logging.info("Exporting fp16 models")
+        filename_fp16 = params.exp_dir / f"ctc-{params.suffix}.fp16.onnx"
         export_onnx_fp16(filename, filename_fp16)
+
+    # We have observed large accuracy drop after int8 quantization for CTC models, so we disable it for now.
+    if params.enable_int8_quantization:
+        logging.info("Exporting int8 quantization models")
+        filename_int8 = params.exp_dir / f"ctc-{params.suffix}.int8.onnx"
+        quantize_dynamic(
+            model_input=filename,
+            model_output=filename_int8,
+            op_types_to_quantize=["MatMul"],
+            weight_type=QuantType.QInt8,
+        )
 
 
 # ==============================================================================
@@ -867,7 +589,9 @@ def export_streaming_encoder_onnx(
     opset_version: int = 11,
 ):
     """Shared logic for exporting streaming encoder (transducer or CTC) to ONNX."""
-    encoder_model.encoder.__class__.forward = encoder_model.encoder.__class__.streaming_forward
+    encoder_model.encoder.__class__.forward = (
+        encoder_model.encoder.__class__.streaming_forward
+    )
 
     T = encoder_model.chunk_size * 2 + encoder_model.pad_length
     x = torch.rand(1, T, feature_dim, dtype=torch.float32)
@@ -937,112 +661,32 @@ def export_streaming_encoder_onnx(
     )
 
 
-class OnnxStreamingEncoder(torch.nn.Module):
-    """A wrapper for Zipformer and the encoder_proj from the joiner (streaming)."""
-
-    def __init__(self, encoder, encoder_embed, encoder_proj):
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.encoder_proj = encoder_proj
-        self.chunk_size = encoder.chunk_size[0]
-        self.left_context_len = encoder.left_context_frames[0]
-        self.pad_length = 7 + 2 * 3
-
-    def forward(
-        self, x: torch.Tensor, states: List[torch.Tensor]
-    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        N = x.size(0)
-        T = self.chunk_size * 2 + self.pad_length
-        x_lens = torch.tensor([T] * N, device=x.device)
-        left_context_len = self.left_context_len
-
-        cached_embed_left_pad = states[-2]
-        x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            cached_left_pad=cached_embed_left_pad,
-        )
-        assert x.size(1) == self.chunk_size, (x.size(1), self.chunk_size)
-
-        src_key_padding_mask = torch.zeros(N, self.chunk_size, dtype=torch.bool)
-
-        processed_mask = torch.arange(left_context_len, device=x.device).expand(
-            x.size(0), left_context_len
-        )
-        processed_lens = states[-1]
-        processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
-        new_processed_lens = processed_lens + x_lens
-        src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
-
-        x = x.permute(1, 0, 2)
-        encoder_states = states[:-2]
-        logging.info(f"len_encoder_states={len(encoder_states)}")
-        (
-            encoder_out,
-            encoder_out_lens,
-            new_encoder_states,
-        ) = self.encoder.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            states=encoder_states,
-            src_key_padding_mask=src_key_padding_mask,
-        )
-        encoder_out = encoder_out.permute(1, 0, 2)
-        encoder_out = self.encoder_proj(encoder_out)
-
-        new_states = new_encoder_states + [
-            new_cached_embed_left_pad,
-            new_processed_lens,
-        ]
-        return encoder_out, new_states
-
-    def get_init_states(
-        self,
-        batch_size: int = 1,
-        device: torch.device = torch.device("cpu"),
-    ) -> List[torch.Tensor]:
-        states = self.encoder.get_init_states(batch_size, device)
-        embed_states = self.encoder_embed.get_init_states(batch_size, device)
-        states.append(embed_states)
-        processed_lens = torch.zeros(batch_size, dtype=torch.int64, device=device)
-        states.append(processed_lens)
-        return states
-
-
 def export_onnx_streaming_transducer(params, model):
     """Export streaming transducer model to ONNX."""
+    logging.info("Exporting streaming transducer model to ONNX")
 
-    encoder = OnnxStreamingEncoder(
+    encoder = OnnxStreamingEncoderWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         encoder_proj=model.joiner.encoder_proj,
     )
-    decoder = OnnxDecoder(
+    decoder = OnnxDecoderWrapper(
         decoder=model.decoder,
         decoder_proj=model.joiner.decoder_proj,
     )
-    joiner = OnnxJoiner(output_linear=model.joiner.output_linear)
+    joiner = OnnxJoinerWrapper(output_linear=model.joiner.output_linear)
 
     encoder_num_param = sum([p.numel() for p in encoder.parameters()])
     decoder_num_param = sum([p.numel() for p in decoder.parameters()])
     joiner_num_param = sum([p.numel() for p in joiner.parameters()])
     total_num_param = encoder_num_param + decoder_num_param + joiner_num_param
-    logging.info(f"encoder parameters: {encoder_num_param}")
-    logging.info(f"decoder parameters: {decoder_num_param}")
-    logging.info(f"joiner parameters: {joiner_num_param}")
-    logging.info(f"total parameters: {total_num_param}")
-
-    if params.iter > 0:
-        suffix = f"iter-{params.iter}"
-    else:
-        suffix = f"epoch-{params.epoch}"
-    suffix += f"-avg-{params.avg}"
-    suffix += f"-chunk-{params.chunk_size}"
-    suffix += f"-left-{params.left_context_frames}"
+    logging.info(f"Encoder parameters: {encoder_num_param}")
+    logging.info(f"Decoder parameters: {decoder_num_param}")
+    logging.info(f"Joiner parameters: {joiner_num_param}")
+    logging.info(f"Total parameters: {total_num_param}")
 
     opset_version = 13
-    dynamic_batch = params.dynamic_batch == 1
+    dynamic_batch = params.dynamic_batch
 
     meta_data = get_streaming_meta_data(
         encoder,
@@ -1052,9 +696,9 @@ def export_onnx_streaming_transducer(params, model):
 
     logging.info("Exporting encoder")
     if params.use_external_data:
-        encoder_filename = f"encoder-{suffix}.onnx"
+        encoder_filename = f"encoder-{params.suffix}.onnx"
     else:
-        encoder_filename = params.exp_dir / f"encoder-{suffix}.onnx"
+        encoder_filename = params.exp_dir / f"encoder-{params.suffix}.onnx"
 
     export_streaming_encoder_onnx(
         encoder,
@@ -1069,7 +713,7 @@ def export_onnx_streaming_transducer(params, model):
     logging.info(f"Exported encoder to {encoder_filename}")
 
     logging.info("Exporting decoder")
-    decoder_filename = params.exp_dir / f"decoder-{suffix}.onnx"
+    decoder_filename = params.exp_dir / f"decoder-{params.suffix}.onnx"
     _export_decoder_model_onnx(
         decoder,
         decoder_filename,
@@ -1079,7 +723,7 @@ def export_onnx_streaming_transducer(params, model):
     logging.info(f"Exported decoder to {decoder_filename}")
 
     logging.info("Exporting joiner")
-    joiner_filename = params.exp_dir / f"joiner-{suffix}.onnx"
+    joiner_filename = params.exp_dir / f"joiner-{params.suffix}.onnx"
     _export_joiner_model_onnx(
         joiner,
         joiner_filename,
@@ -1088,26 +732,26 @@ def export_onnx_streaming_transducer(params, model):
     )
     logging.info(f"Exported joiner to {joiner_filename}")
 
-    if params.fp16:
-        logging.info("Generate fp16 models")
+    if params.export_fp16:
+        logging.info("Exporting fp16 models")
         if params.use_external_data:
-            encoder_filename_fp16 = f"encoder-{suffix}.fp16.onnx"
+            encoder_filename_fp16 = f"encoder-{params.suffix}.fp16.onnx"
             export_onnx_fp16_large_2gb(encoder_filename, encoder_filename_fp16)
         else:
-            encoder_filename_fp16 = params.exp_dir / f"encoder-{suffix}.fp16.onnx"
+            encoder_filename_fp16 = params.exp_dir / f"encoder-{params.suffix}.fp16.onnx"
             export_onnx_fp16(encoder_filename, encoder_filename_fp16)
-        decoder_filename_fp16 = params.exp_dir / f"decoder-{suffix}.fp16.onnx"
+        decoder_filename_fp16 = params.exp_dir / f"decoder-{params.suffix}.fp16.onnx"
         export_onnx_fp16(decoder_filename, decoder_filename_fp16)
-        joiner_filename_fp16 = params.exp_dir / f"joiner-{suffix}.fp16.onnx"
+        joiner_filename_fp16 = params.exp_dir / f"joiner-{params.suffix}.fp16.onnx"
         export_onnx_fp16(joiner_filename, joiner_filename_fp16)
 
     if params.enable_int8_quantization:
-        logging.info("Generate int8 quantization models")
+        logging.info("Exporting int8 quantization models")
 
         if params.use_external_data:
-            encoder_filename_int8 = f"encoder-{suffix}.int8.onnx"
+            encoder_filename_int8 = f"encoder-{params.suffix}.int8.onnx"
         else:
-            encoder_filename_int8 = params.exp_dir / f"encoder-{suffix}.int8.onnx"
+            encoder_filename_int8 = params.exp_dir / f"encoder-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=encoder_filename,
             model_output=encoder_filename_int8,
@@ -1117,7 +761,7 @@ def export_onnx_streaming_transducer(params, model):
 
         # We don't quantize the decoder since it may cause large accuracy drop.
 
-        joiner_filename_int8 = params.exp_dir / f"joiner-{suffix}.int8.onnx"
+        joiner_filename_int8 = params.exp_dir / f"joiner-{params.suffix}.int8.onnx"
         quantize_dynamic(
             model_input=joiner_filename,
             model_output=joiner_filename_int8,
@@ -1129,136 +773,21 @@ def export_onnx_streaming_transducer(params, model):
 # ==============================================================================
 # ONNX Streaming CTC
 # ==============================================================================
-
-class OnnxStreamingCtcModel(torch.nn.Module):
-    """A wrapper for Zipformer and the ctc_head (streaming)."""
-
-    def __init__(
-        self,
-        encoder: torch.nn.Module,
-        encoder_embed: torch.nn.Module,
-        ctc_output: torch.nn.Module,
-    ):
-        """
-        Args:
-          encoder:
-            A Zipformer encoder.
-          encoder_proj:
-            The projection layer for encoder from the joiner.
-          ctc_output:
-            The ctc head.
-        """
-        super().__init__()
-        self.encoder = encoder
-        self.encoder_embed = encoder_embed
-        self.ctc_output = ctc_output
-        self.chunk_size = encoder.chunk_size[0]
-        self.left_context_len = encoder.left_context_frames[0]
-        self.pad_length = 7 + 2 * 3
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        states: List[torch.Tensor],
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
-        N = x.size(0)
-        T = self.chunk_size * 2 + self.pad_length
-        x_lens = torch.tensor([T] * N, device=x.device)
-        left_context_len = self.left_context_len
-
-        cached_embed_left_pad = states[-2]
-        x, x_lens, new_cached_embed_left_pad = self.encoder_embed.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            cached_left_pad=cached_embed_left_pad,
-        )
-        assert x.size(1) == self.chunk_size, (x.size(1), self.chunk_size)
-
-        src_key_padding_mask = torch.zeros(N, self.chunk_size, dtype=torch.bool)
-
-        # processed_mask is used to mask out initial states
-        processed_mask = torch.arange(left_context_len, device=x.device).expand(
-            x.size(0), left_context_len
-        )
-        processed_lens = states[-1]  # (batch,)
-        # (batch, left_context_size)
-        processed_mask = (processed_lens.unsqueeze(1) <= processed_mask).flip(1)
-        # Update processed lengths
-        new_processed_lens = processed_lens + x_lens
-        # (batch, left_context_size + chunk_size)
-        src_key_padding_mask = torch.cat([processed_mask, src_key_padding_mask], dim=1)
-
-        x = x.permute(1, 0, 2)
-        encoder_states = states[:-2]
-        logging.info(f"len_encoder_states={len(encoder_states)}")
-        (
-            encoder_out,
-            encoder_out_lens,
-            new_encoder_states,
-        ) = self.encoder.streaming_forward(
-            x=x,
-            x_lens=x_lens,
-            states=encoder_states,
-            src_key_padding_mask=src_key_padding_mask,
-        )
-        encoder_out = encoder_out.permute(1, 0, 2)
-        encoder_out = self.ctc_output(encoder_out)
-        # Now encoder_out is of shape (N, T, ctc_output_dim)
-
-        new_states = new_encoder_states + [
-            new_cached_embed_left_pad,
-            new_processed_lens,
-        ]
-
-        return encoder_out, new_states
-
-    def get_init_states(
-        self,
-        batch_size: int = 1,
-        device: torch.device = torch.device("cpu"),
-    ) -> List[torch.Tensor]:
-        """
-        Returns a list of cached tensors of all encoder layers. For layer-i, states[i*6:(i+1)*6]
-        is (cached_key, cached_nonlin_attn, cached_val1, cached_val2, cached_conv1, cached_conv2).
-        states[-2] is the cached left padding for ConvNeXt module,
-        of shape (batch_size, num_channels, left_pad, num_freqs)
-        states[-1] is processed_lens of shape (batch,), which records the number
-        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
-        """
-        states = self.encoder.get_init_states(batch_size, device)
-
-        embed_states = self.encoder_embed.get_init_states(batch_size, device)
-
-        states.append(embed_states)
-
-        processed_lens = torch.zeros(batch_size, dtype=torch.int64, device=device)
-        states.append(processed_lens)
-
-        return states
-
-
 def export_onnx_streaming_ctc(params, model):
     """Export streaming CTC model to ONNX."""
-    
-    ctc_model = OnnxStreamingCtcModel(
+    logging.info("Exporting streaming CTC model to ONNX")
+
+    ctc_model = OnnxStreamingCtcWrapper(
         encoder=model.encoder,
         encoder_embed=model.encoder_embed,
         ctc_output=model.ctc_output,
     )
 
     total_num_param = sum([p.numel() for p in ctc_model.parameters()])
-    logging.info(f"total parameters: {total_num_param}")
-
-    if params.iter > 0:
-        suffix = f"iter-{params.iter}"
-    else:
-        suffix = f"epoch-{params.epoch}"
-    suffix += f"-avg-{params.avg}"
-    suffix += f"-chunk-{params.chunk_size}"
-    suffix += f"-left-{params.left_context_frames}"
+    logging.info(f"Total parameters: {total_num_param}")
 
     opset_version = 13
-    dynamic_batch = params.dynamic_batch == 1
+    dynamic_batch = params.dynamic_batch
 
     meta_data = get_streaming_meta_data(
         ctc_model,
@@ -1266,11 +795,10 @@ def export_onnx_streaming_ctc(params, model):
     )
     logging.info(f"meta_data: {meta_data}")
 
-    logging.info("Exporting model")
     if params.use_external_data:
-        model_filename = f"ctc-{suffix}.onnx"
+        model_filename = f"ctc-{params.suffix}.onnx"
     else:
-        model_filename = params.exp_dir / f"ctc-{suffix}.onnx"
+        model_filename = params.exp_dir / f"ctc-{params.suffix}.onnx"
 
     export_streaming_encoder_onnx(
         ctc_model,
@@ -1282,15 +810,15 @@ def export_onnx_streaming_ctc(params, model):
         output_name="log_probs",
         meta_data=meta_data,
     )
-    logging.info(f"Exported model to {model_filename}")
+    logging.info(f"Saving model to {model_filename}")
 
     if params.enable_int8_quantization:
-        logging.info("Generate int8 quantization models")
+        logging.info("Exporting int8 quantization models")
 
         if params.use_external_data:
-            model_filename_int8 = f"ctc-{suffix}.int8.onnx"
+            model_filename_int8 = f"ctc-{params.suffix}.int8.onnx"
         else:
-            model_filename_int8 = params.exp_dir / f"ctc-{suffix}.int8.onnx"
+            model_filename_int8 = params.exp_dir / f"ctc-{params.suffix}.int8.onnx"
 
         quantize_dynamic(
             model_input=model_filename,
@@ -1299,20 +827,19 @@ def export_onnx_streaming_ctc(params, model):
             weight_type=QuantType.QInt8,
         )
 
-    if params.fp16:
+    if params.export_fp16:
+        logging.info("Exporting fp16 models")
         if params.use_external_data:
-            model_filename_fp16 = f"ctc-{suffix}.fp16.onnx"
+            model_filename_fp16 = f"ctc-{params.suffix}.fp16.onnx"
             export_onnx_fp16_large_2gb(model_filename, model_filename_fp16)
         else:
-            model_filename_fp16 = params.exp_dir / f"ctc-{suffix}.fp16.onnx"
+            model_filename_fp16 = params.exp_dir / f"ctc-{params.suffix}.fp16.onnx"
             export_onnx_fp16(model_filename, model_filename_fp16)
 
 
 # ==============================================================================
 # Shared checkpoint loading
 # ==============================================================================
-
-
 def load_model_checkpoint(params, model, strict=True, device=torch.device("cpu")):
     """Load and average checkpoints into model."""
     model.to(device)
@@ -1400,8 +927,6 @@ def load_model_checkpoint(params, model, strict=True, device=torch.device("cpu")
 # ==============================================================================
 # Main
 # ==============================================================================
-
-
 @torch.no_grad()
 def main():
     args = get_parser().parse_args()
@@ -1432,6 +957,16 @@ def main():
             "Either --bpe-model or --tokens must be provided and point to a valid file."
         )
 
+    if params.iter > 0:
+        suffix = f"iter-{params.iter}"
+    else:
+        suffix = f"epoch-{params.epoch}"
+    suffix += f"-avg-{params.avg}"
+    if params.causal:
+        suffix += f"-chunk-{params.chunk_size}"
+        suffix += f"-left-{params.left_context_frames}"
+    params.suffix = suffix
+
     logging.info(params)
 
     # Create model
@@ -1444,21 +979,19 @@ def main():
     model.to("cpu")
     model.eval()
 
-    # Route to the appropriate export function
-    if params.export_type == "torch":
-        export_torch(params, model)
-    elif params.export_type == "onnx":
-        convert_scaled_to_non_scaled(model, inplace=True)
-
-        if params.streaming:
-            if params.ctc:
+    # export state_dict and jit script model
+    torch_model = deepcopy(model)
+    export_torch(params, torch_model)
+    if params.export_onnx:
+        if params.causal:
+            if params.use_ctc:
                 export_onnx_streaming_ctc(params, model)
-            else:
+            if params.use_transducer:
                 export_onnx_streaming_transducer(params, model)
         else:
-            if params.ctc:
+            if params.use_ctc:
                 export_onnx_ctc(params, model)
-            else:
+            if params.use_transducer:
                 export_onnx_transducer(params, model)
 
 
