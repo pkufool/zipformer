@@ -740,7 +740,9 @@ def export_onnx_streaming_transducer(params, model):
             encoder_filename_fp16 = f"encoder-{params.suffix}.fp16.onnx"
             export_onnx_fp16_large_2gb(encoder_filename, encoder_filename_fp16)
         else:
-            encoder_filename_fp16 = params.exp_dir / f"encoder-{params.suffix}.fp16.onnx"
+            encoder_filename_fp16 = (
+                params.exp_dir / f"encoder-{params.suffix}.fp16.onnx"
+            )
             export_onnx_fp16(encoder_filename, encoder_filename_fp16)
         decoder_filename_fp16 = params.exp_dir / f"decoder-{params.suffix}.fp16.onnx"
         export_onnx_fp16(decoder_filename, decoder_filename_fp16)
@@ -753,7 +755,9 @@ def export_onnx_streaming_transducer(params, model):
         if params.use_external_data:
             encoder_filename_int8 = f"encoder-{params.suffix}.int8.onnx"
         else:
-            encoder_filename_int8 = params.exp_dir / f"encoder-{params.suffix}.int8.onnx"
+            encoder_filename_int8 = (
+                params.exp_dir / f"encoder-{params.suffix}.int8.onnx"
+            )
         quantize_dynamic(
             model_input=encoder_filename,
             model_output=encoder_filename_int8,

@@ -22,7 +22,7 @@ from .utils import (
     is_module_available,
     num_tokens,
     token_ids_to_text,
-    remove_punctuation,
+    replace_punctuation_with_space,
     store_transcripts,
     str2bool,
     time_warp,
@@ -35,3 +35,5 @@ from .utils import (
     SymbolTable,
     raise_grad_scale_is_too_small_error,
 )
+
+from atdataset import fix_random_seed

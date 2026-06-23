@@ -21,8 +21,9 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
-from lhotse.utils import fix_random_seed
 from torch.optim import Optimizer
+
+from zipformer.utils import fix_random_seed
 
 
 class BatchedOptimizer(Optimizer):

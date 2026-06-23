@@ -60,7 +60,7 @@ from zipformer.utils import (
     str2bool,
     write_error_stats,
     remove_punctuation,
-    tokenize_by_cjk_char
+    tokenize_by_cjk_char,
 )
 
 

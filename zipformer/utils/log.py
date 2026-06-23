@@ -203,6 +203,7 @@ class MetricsTracker(collections.defaultdict):
         for k, v in self.norm_items():
             tb_writer.add_scalar(prefix + k, v, batch_idx)
 
+
 def setup_logger(
     log_filename: Path, log_level: str = "info", use_console: bool = True
 ) -> None:

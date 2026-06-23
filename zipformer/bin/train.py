@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Copyright    2021-2026  Xiaomi Corp.        (authors: Wei Kang,
+#                                                       Daniel Povey,
 #                                                       Zengwei Yao,
-#                                                       Fangjun Kuang,
-#                                                       Daniel Povey)
+#                                                       Fangjun Kuang)
 #
 # See ../../LICENSE for clarification regarding multiple authors
 #
@@ -23,34 +23,37 @@ import argparse
 import copy
 import logging
 import re
+import uuid
 import warnings
+
+from functools import partial
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Dict, Optional, Tuple, Union
-from tqdm import tqdm
-
-from functools import partial
 
 import torch
 import torch.multiprocessing as mp
-from lhotse.dataset import SpecAugment
-from lhotse.utils import fix_random_seed
+
+from atdataset import ATDataloader, Fbank, SpecAugment
+from tqdm import tqdm
 from torch.cuda.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 from ssentencepiece import Ssentencepiece
+
 from zipformer.modules.model import AsrModel
-from zipformer.modules import optim
-from zipformer.modules.optim import Eden, ScaledAdam
+from zipformer.modules.optim import Eden, LRScheduler, ScaledAdam
 
 from zipformer.utils import save_checkpoint as save_checkpoint_impl
 
 from zipformer.utils import (
     load_checkpoint,
     remove_checkpoints,
+    replace_punctuation_with_space,
     save_checkpoint_with_global_batch_idx,
     update_averaged_model,
     cleanup_dist,
+    fix_random_seed,
     setup_dist,
     get_env_info,
     raise_grad_scale_is_too_small_error,
@@ -60,10 +63,8 @@ from zipformer.utils import (
     setup_logger,
     str2bool,
 )
-from atdataset import ATDataloader, Fbank
 
-
-LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler]
+LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, LRScheduler]
 
 
 def get_adjusted_batch_count(params: AttributeDict) -> float:
@@ -206,6 +207,13 @@ def add_model_arguments(parser: argparse.ArgumentParser):
     )
 
     parser.add_argument(
+        "--use-attention-decoder",
+        type=str2bool,
+        default=False,
+        help="If True, use attention-decoder head.",
+    )
+
+    parser.add_argument(
         "--attention-decoder-dim",
         type=int,
         default=512,
@@ -279,19 +287,14 @@ def add_model_arguments(parser: argparse.ArgumentParser):
     )
 
     parser.add_argument(
-        "--use-attention-decoder",
-        type=str2bool,
-        default=False,
-        help="If True, use attention-decoder head.",
-    )
-
-    parser.add_argument(
         "--use-cr-ctc",
         type=str2bool,
         default=True,
         help="If True, use consistency-regularized CTC.",
     )
 
+
+def add_dataloader_arguments(parser: argparse.ArgumentParser):
     parser.add_argument(
         "--enable-spec-aug",
         type=str2bool,
@@ -307,6 +310,93 @@ def add_model_arguments(parser: argparse.ArgumentParser):
         "It specifies the factor for time warping in SpecAugment. "
         "Larger values mean more warping. "
         "A value less than 1 means to disable time warp.",
+    )
+
+    parser.add_argument(
+        "--time-mask-ratio",
+        type=float,
+        default=2.5,
+        help="When using cr-ctc, we increase the amount of time-masking in SpecAugment.",
+    )
+
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=4,
+        help="Number of workers to use for each data loader.",
+    )
+
+    parser.add_argument(
+        "--max-duration",
+        type=float,
+        default=200,
+        help="Maximum duration (in seconds) of each batch during training. ",
+    )
+
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=100,
+        help="Maximum num of samples of each batch during training. ",
+    )
+
+    parser.add_argument(
+        "--training-sets",
+        nargs="+",
+        help="A list of training sets, e.g., "
+        "librispeech-train-clean-100 librispeech-train-clean-360 librispeech-train-other-500",
+    )
+
+    parser.add_argument(
+        "--training-weights",
+        type=str,
+        help="A comma-separated list of weights for each training sets. ",
+    )
+
+    parser.add_argument(
+        "--epoch-hours",
+        type=float,
+        help="Number of hours to process in each epoch.",
+    )
+
+    parser.add_argument(
+        "--validation-sets",
+        nargs="*",
+        help="A list of validation sets, e.g., librispeech-dev-clean librispeech-dev-other",
+    )
+
+    parser.add_argument(
+        "--validation-weights",
+        type=str,
+        help="A comma-separated list of weights for each validation sets. ",
+    )
+
+    parser.add_argument(
+        "--use-noise-augment",
+        type=str2bool,
+        default=True,
+        help="Whether to use noise augment for training.",
+    )
+
+    parser.add_argument(
+        "--noise-list",
+        type=str,
+        default="data/tars/musan.lst",
+        help="The noise list used for exp-augment.",
+    )
+
+    parser.add_argument(
+        "--use-speed-perturb",
+        type=str2bool,
+        default=True,
+        help="Whether to use speed perturbation for training.",
+    )
+
+    parser.add_argument(
+        "--use-volume-perturb",
+        type=str2bool,
+        default=True,
+        help="Whether to use volume perturbation for training.",
     )
 
 
@@ -476,13 +566,6 @@ def get_parser():
     )
 
     parser.add_argument(
-        "--time-mask-ratio",
-        type=float,
-        default=2.5,
-        help="When using cr-ctc, we increase the amount of time-masking in SpecAugment.",
-    )
-
-    parser.add_argument(
         "--attention-decoder-loss-scale",
         type=float,
         default=0.8,
@@ -494,20 +577,6 @@ def get_parser():
         type=int,
         default=42,
         help="The seed for random generators intended for reproducibility",
-    )
-
-    parser.add_argument(
-        "--print-diagnostics",
-        type=str2bool,
-        default=False,
-        help="Accumulate stats on activations, print them and exit.",
-    )
-
-    parser.add_argument(
-        "--inf-check",
-        type=str2bool,
-        default=False,
-        help="Add hooks to check for infinite module outputs and gradients.",
     )
 
     parser.add_argument(
@@ -561,101 +630,8 @@ def get_parser():
         help="Whether to use bf16 in AMP.",
     )
 
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=4,
-        help="Number of workers to use for each data loader.",
-    )
-
-    parser.add_argument(
-        "--max-duration",
-        type=float,
-        default=200,
-        help="Maximum duration (in seconds) of each batch during training. ",
-    )
-
-    parser.add_argument(
-        "--max-samples",
-        type=int,
-        default=100,
-        help="Maximum num of samples of each batch during training. ",
-    )
-
-    parser.add_argument(
-        "--training-sets",
-        nargs="+",
-        help="A list of training sets, e.g., "
-        "librispeech-train-clean-100 librispeech-train-clean-360 librispeech-train-other-500",
-    )
-
-    parser.add_argument(
-        "--training-weights",
-        type=str,
-        help="A comma-separated list of weights for each training sets. ",
-    )
-
-    parser.add_argument(
-        "--epoch-hours",
-        type=float,
-        help="Number of hours to process in each epoch.",
-    )
-
-    parser.add_argument(
-        "--validation-sets",
-        nargs="*",
-        help="A list of validation sets, e.g., librispeech-dev-clean librispeech-dev-other",
-    )
-
-    parser.add_argument(
-        "--validation-weights",
-        type=str,
-        help="A comma-separated list of weights for each validation sets. ",
-    )
-
-    parser.add_argument(
-        "--use-noise-augment",
-        type=str2bool,
-        default=True,
-        help="Whether to use noise augment for training.",
-    )
-
-    parser.add_argument(
-        "--noise-list",
-        type=str,
-        default="data/tars/musan.lst",
-        help="The noise list used for exp-augment.",
-    )
-
-    parser.add_argument(
-        "--use-speed-perturb",
-        type=str2bool,
-        default=True,
-        help="Whether to use speed perturbation for training.",
-    )
-
-    parser.add_argument(
-        "--use-volume-perturb",
-        type=str2bool,
-        default=True,
-        help="Whether to use volume perturbation for training.",
-    )
-
-    parser.add_argument(
-        "--use-rir-augment",
-        type=str2bool,
-        default=False,
-        help="Whether to use rir augment for training.",
-    )
-
-    parser.add_argument(
-        "--rir-list",
-        type=str,
-        help="The noise list used for exp-augment.",
-    )
-
     add_model_arguments(parser)
-
+    add_dataloader_arguments(parser)
     return parser
 
 
@@ -908,8 +884,7 @@ def compute_loss(
       model:
         The model for training. It is an instance of Zipformer in our case.
       batch:
-        A batch of data. See `lhotse.dataset.K2SpeechRecognitionDataset()`
-        for the content in it.
+        A batch of data.
       is_training:
         True for training. False for validation. When it is True, this
         function enables autograd during computation; when it is False, it
@@ -1016,7 +991,7 @@ def compute_validation_loss(
 
     tot_loss = MetricsTracker()
 
-    for batch_idx, batch in enumerate(valid_dl):
+    for _, batch in enumerate(valid_dl):
         loss, loss_info = compute_loss(
             params=params,
             model=model,
@@ -1271,14 +1246,15 @@ def filter_func(sample: Dict[str, Any], sp: Ssentencepiece, sample_rate: int) ->
     text = sample["text"]
     tokens = sp.encode(text)
     S = len(tokens)
+    # filter empty text, too short or too long text, and too long audio
     if S == 0 or T - S <= 5 or T / S > 25:
         return False
     return True
 
 
 def map_func(sample):
-    text = sample["text"]
-    text = re.sub(r"[,.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", " ", text)
+    text = replace_punctuation_with_space(sample["text"])
+    # remove extra spaces and strip leading/trailing spaces
     text = re.sub(r"\s+", " ", text).strip()
     sample["text"] = text
     return sample
@@ -1522,16 +1498,13 @@ def display_and_save_batch(
 
     Args:
       batch:
-        A batch of data. See `lhotse.dataset.K2SpeechRecognitionDataset()`
-        for the content in it.
+        A batch of data.
       params:
         Parameters for training. See :func:`get_params`.
       sp:
         The BPE model.
     """
-    from lhotse.utils import uuid4
-
-    filename = f"{params.exp_dir}/batch-{uuid4()}.pt"
+    filename = f"{params.exp_dir}/batch-{uuid.uuid4()}.pt"
     logging.info(f"Saving batch to {filename}")
     torch.save(batch, filename)
 

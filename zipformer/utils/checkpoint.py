@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import torch
-from lhotse.dataset.sampling.base import CutSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 
@@ -42,7 +41,6 @@ def save_checkpoint(
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
     scaler: Optional["GradScaler"] = None,
-    sampler: Optional[CutSampler] = None,
     rank: int = 0,
 ) -> None:
     """Save training information to a file.
@@ -80,7 +78,6 @@ def save_checkpoint(
         "optimizer": optimizer.state_dict() if optimizer is not None else None,
         "scheduler": scheduler.state_dict() if scheduler is not None else None,
         "grad_scaler": scaler.state_dict() if scaler is not None else None,
-        "sampler": sampler.state_dict() if sampler is not None else None,
     }
 
     if model_avg is not None:
@@ -101,7 +98,6 @@ def load_checkpoint(
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
     scaler: Optional["GradScaler"] = None,
-    sampler: Optional[CutSampler] = None,
     strict: bool = False,
 ) -> Dict[str, Any]:
     """
@@ -139,7 +135,6 @@ def load_checkpoint(
     load("optimizer", optimizer)
     load("scheduler", scheduler)
     load("grad_scaler", scaler)
-    load("sampler", sampler)
 
     return checkpoint
 
@@ -200,7 +195,6 @@ def save_checkpoint_with_global_batch_idx(
     optimizer: Optional[Optimizer] = None,
     scheduler: Optional[LRSchedulerType] = None,
     scaler: Optional["GradScaler"] = None,
-    sampler: Optional[CutSampler] = None,
     rank: int = 0,
 ):
     """Save training info after processing given number of batches.
@@ -228,8 +222,6 @@ def save_checkpoint_with_global_batch_idx(
       scaler:
         The scaler used for mix precision training. Its `state_dict` will
         be saved.
-      sampler:
-        The sampler used in the training dataset.
       rank:
         The rank ID used in DDP training of the current node. Set it to 0
         if DDP is not used.
@@ -245,7 +237,6 @@ def save_checkpoint_with_global_batch_idx(
         optimizer=optimizer,
         scheduler=scheduler,
         scaler=scaler,
-        sampler=sampler,
         rank=rank,
     )
 

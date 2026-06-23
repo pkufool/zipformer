@@ -29,13 +29,12 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Dict, Generic, List, Optional, TypeVar, Union
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, TextIO, Tuple, Union
+from typing import Dict, Iterable, List, Optional, TextIO, Tuple, Union
 
 import kaldialign
 import torch
-from torch import distributed as dist
+
 from lhotse.dataset.signal_transforms import time_warp as time_warp_impl
 from packaging import version
 
@@ -352,8 +351,8 @@ def token_ids_to_text(token_ids: List[int], token_table: SymbolTable) -> str:
     return text.decode(encoding="utf-8").replace("▁", " ").strip()
 
 
-def remove_punctuation(s: str) -> str:
-    return re.sub(r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", "", s)
+def replace_punctuation_with_space(s: str) -> str:
+    return re.sub(r"[,\.?!\"，。？！“”：:、<>《》\[\]{}【】;；]", " ", s)
 
 
 @contextmanager

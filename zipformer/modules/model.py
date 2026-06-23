@@ -22,10 +22,9 @@ import logging
 from typing import Optional, Tuple, Union, List
 
 import torch
-from lhotse.dataset import SpecAugment
+from atdataset import SpecAugment, time_warp
 from zipformer.utils import (
     make_pad_mask,
-    time_warp,
     torch_autocast,
     pad_sequences,
 )
