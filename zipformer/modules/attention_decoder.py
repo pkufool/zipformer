@@ -187,7 +187,9 @@ class TransformerDecoder(torch.nn.Module):
         dropout: float = 0.1,
     ):
         super().__init__()
-        self.embed = torch.nn.Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
+        self.embed = torch.nn.Embedding(
+            num_embeddings=vocab_size, embedding_dim=d_model
+        )
 
         # Absolute positional encoding
         self.pos = PositionalEncoding(d_model, dropout_rate=0.1)

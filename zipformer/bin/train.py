@@ -1405,9 +1405,9 @@ def run(local_rank, world_size, args):
 
     training_sets = params.training_sets
     training_weights = None
-    assert (
-        training_sets is not None and len(training_sets) > 0
-    ), "training_sets must be provided"
+    assert training_sets is not None and len(training_sets) > 0, (
+        "training_sets must be provided"
+    )
     if params.training_weights is not None:
         training_weights = list(map(float, params.training_weights.split(",")))
         assert len(training_weights) == len(training_sets)

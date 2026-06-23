@@ -17,13 +17,14 @@
 # limitations under the License.
 
 import warnings
+
+from multiprocessing.pool import Pool
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
+
 from zipformer.decode.context_graph import ContextGraph
 from zipformer.decode.ngram_lm import NgramLm, NgramLmStateCost
-
-from multiprocessing.pool import Pool
 from zipformer.decode.stream import (
     DecodeStream,
     Hypothesis,
@@ -31,10 +32,16 @@ from zipformer.decode.stream import (
     AsrResults,
     KeywordResult,
 )
+from zipformer.modules.model import (
+    OnnxTransducerModel,
+    OnnxStreamingTransducerModel,
+    OnnxCtcModel,
+    OnnxStreamingCtcModel,
+)
 
 
 def _greedy_search_batch(
-    model: torch.nn.Module,
+    model: Union[torch.nn.Module, torch.jit.ScriptModule, OnnxTransducerModel],
     encoder_out: torch.Tensor,
     encoder_out_lens: torch.Tensor,
     blank_penalty: float = 0,
@@ -58,6 +65,8 @@ def _greedy_search_batch(
       Else, return a AsrResults object containing
       decoded result and corresponding timestamps.
     """
+    is_onnx = isinstance(model, OnnxTransducerModel)
+
     assert encoder_out.ndim == 3
     assert encoder_out.size(0) >= 1, encoder_out.size(0)
 
@@ -67,12 +76,19 @@ def _greedy_search_batch(
         batch_first=True,
         enforce_sorted=False,
     )
-
-    device = next(model.parameters()).device
-
-    blank_id = model.decoder.blank_id
-    unk_id = getattr(model, "unk_id", blank_id)
-    context_size = model.decoder.context_size
+    if is_onnx:
+        # ONNX models are always on CPU
+        device = torch.device("cpu")
+        blank_id = getattr(
+            model, "blank_id", 0
+        )  # default blank_id to 0 if not found in meta data
+        unk_id = getattr(model, "unk_id", blank_id)
+        context_size = model.context_size
+    else:
+        device = next(model.parameters()).device
+        blank_id = model.decoder.blank_id
+        unk_id = getattr(model, "unk_id", blank_id)
+        context_size = model.decoder.context_size
 
     batch_size_list = packed_encoder_out.batch_sizes.tolist()
     N = encoder_out.size(0)
@@ -93,29 +109,31 @@ def _greedy_search_batch(
         dtype=torch.int64,
     )  # (N, context_size)
 
-    decoder_out = model.decoder(decoder_input, need_pad=False)
-    decoder_out = model.joiner.decoder_proj(decoder_out)
-    # decoder_out: (N, 1, decoder_out_dim)
-
-    encoder_out = model.joiner.encoder_proj(packed_encoder_out.data)
+    if is_onnx:
+        decoder_out = model.run_decoder(decoder_input)
+        packed_data = packed_encoder_out.data
+    else:
+        decoder_out = model.decoder(decoder_input, need_pad=False)
+        # decoder_out: (N, decoder_out_dim)
+        decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
+        packed_data = model.joiner.encoder_proj(packed_encoder_out.data)
 
     offset = 0
     for t, batch_size in enumerate(batch_size_list):
         start = offset
         end = offset + batch_size
-        current_encoder_out = encoder_out.data[start:end]
-        current_encoder_out = current_encoder_out.unsqueeze(1).unsqueeze(1)
-        # current_encoder_out's shape: (batch_size, 1, 1, encoder_out_dim)
+        current_encoder_out = packed_data[start:end]
+        # current_encoder_out's shape: (batch_size, encoder_out_dim)
         offset = end
 
         decoder_out = decoder_out[:batch_size]
 
-        logits = model.joiner(
-            current_encoder_out, decoder_out.unsqueeze(1), project_input=False
-        )
-        # logits'shape (batch_size, 1, 1, vocab_size)
+        if is_onnx:
+            logits = model.run_joiner(current_encoder_out, decoder_out)
+        else:
+            logits = model.joiner(current_encoder_out, decoder_out, project_input=False)
+            # logits'shape (batch_size, vocab_size)
 
-        logits = logits.squeeze(1).squeeze(1)  # (batch_size, vocab_size)
         assert logits.ndim == 2, logits.shape
 
         if blank_penalty != 0:
@@ -137,8 +155,11 @@ def _greedy_search_batch(
                 device=device,
                 dtype=torch.int64,
             )
-            decoder_out = model.decoder(decoder_input, need_pad=False)
-            decoder_out = model.joiner.decoder_proj(decoder_out)
+            if is_onnx:
+                decoder_out = model.run_decoder(decoder_input)
+            else:
+                decoder_out = model.decoder(decoder_input, need_pad=False)
+                decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
 
     sorted_ans = [h[context_size:] for h in hyps]
     ans = []
@@ -161,7 +182,7 @@ def _greedy_search_batch(
 
 
 def greedy_search(
-    model: Union[torch.nn.Module, torch.jit.ScriptModule],
+    model: Union[torch.nn.Module, torch.jit.ScriptModule, OnnxTransducerModel],
     encoder_out: torch.Tensor,
     encoder_out_lens: torch.Tensor,
     max_sym_per_frame: int = 1,
@@ -275,30 +296,38 @@ def greedy_search(
         )
 
 
-def streaming_greedy_search(
-    model: torch.nn.Module,
+def _streaming_greedy_search_batch(
+    model,
     encoder_out: torch.Tensor,
     streams: List[DecodeStream],
-    max_sym_per_frame: int = 1,
     blank_penalty: float = 0.0,
-    return_timestamps: bool = False,
 ) -> None:
-    """Greedy search in batch mode. It hardcodes --max-sym-per-frame=1.
+    """Streaming greedy search in batch mode. It hardcodes --max-sym-per-frame=1.
 
     Args:
       model:
-        The transducer model.
+        The transducer model (JIT/PyTorch or OnnxStreamingTransducerModel).
       encoder_out:
         Output from the encoder. Its shape is (N, T, C), where N >= 1.
       streams:
         A list of Stream objects.
+      blank_penalty:
+        The score used to penalize blank probability.
     """
     assert len(streams) == encoder_out.size(0)
     assert encoder_out.ndim == 3
 
-    blank_id = model.decoder.blank_id
-    context_size = model.decoder.context_size
-    device = model.device
+    is_onnx = isinstance(model, (OnnxTransducerModel, OnnxStreamingTransducerModel))
+
+    if is_onnx:
+        device = torch.device("cpu")
+        blank_id = getattr(model, "blank_id", 0)
+        context_size = model.context_size
+    else:
+        blank_id = model.decoder.blank_id
+        context_size = model.decoder.context_size
+        device = model.device
+
     T = encoder_out.size(1)
 
     for stream in streams:
@@ -310,45 +339,166 @@ def streaming_greedy_search(
             decoder_input = torch.tensor(
                 [stream.hyp[-context_size:]], device=device, dtype=torch.int64
             ).reshape(1, context_size)
-            decoder_out = model.decoder(decoder_input, need_pad=False)
-            decoder_out = model.joiner.decoder_proj(decoder_out)
-            stream.decoder_out = decoder_out
+            if is_onnx:
+                stream.decoder_out = model.run_decoder(decoder_input)
+            else:
+                decoder_out = model.decoder(decoder_input, need_pad=False)
+                decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
+                stream.decoder_out = decoder_out
 
     for t in range(T):
-        # current_encoder_out's shape: (batch_size, 1, encoder_out_dim)
-        current_encoder_out = encoder_out[:, t : t + 1, :]  # noqa
+        current_encoder_out = encoder_out[:, t, :]  # (N, C)
 
-        # decoder_out is of shape (N, 1, decoder_out_dim)
         decoder_out = torch.cat([stream.decoder_out for stream in streams], dim=0)
 
-        logits = model.joiner(
-            current_encoder_out.unsqueeze(2),
-            decoder_out.unsqueeze(1),
-            project_input=False,
-        )
-        # logits'shape (batch_size,  vocab_size)
-        logits = logits.squeeze(1).squeeze(1)
+        if is_onnx:
+            logits = model.run_joiner(current_encoder_out, decoder_out)
+        else:
+            logits = model.joiner(
+                current_encoder_out,
+                decoder_out,
+                project_input=False,
+            )
+
+        assert logits.ndim == 2, logits.shape
 
         if blank_penalty != 0.0:
             logits[:, 0] -= blank_penalty
 
-        assert logits.ndim == 2, logits.shape
         y = logits.argmax(dim=1).tolist()
         for i, v in enumerate(y):
             if v != blank_id:
                 streams[i].hyp.append(v)
-                # update decoder output
                 decoder_input = torch.tensor(
                     [streams[i].hyp[-context_size:]],
                     device=device,
                     dtype=torch.int64,
                 )
-                decoder_out = model.decoder(
-                    decoder_input,
-                    need_pad=False,
-                )
+                if is_onnx:
+                    streams[i].decoder_out = model.run_decoder(decoder_input)
+                else:
+                    decoder_out = model.decoder(
+                        decoder_input,
+                        need_pad=False,
+                    )
+                    decoder_out = model.joiner.decoder_proj(decoder_out).squeeze(1)
+                    streams[i].decoder_out = decoder_out
+
+
+def streaming_greedy_search(
+    model,
+    encoder_out: torch.Tensor,
+    streams: List[DecodeStream],
+    max_sym_per_frame: int = 1,
+    blank_penalty: float = 0.0,
+    return_timestamps: bool = False,
+) -> None:
+    """Greedy search in batch mode for streaming transducer.
+
+    Args:
+      model:
+        The transducer model (JIT/PyTorch or OnnxStreamingTransducerModel).
+      encoder_out:
+        Output from the encoder. Its shape is (N, T, C), where N >= 1.
+      streams:
+        A list of Stream objects.
+      max_sym_per_frame:
+        Maximum number of symbols per frame. If it is set to 1, each frame
+        emits at most one non-blank symbol. If > 1, multiple symbols can be
+        emitted per frame until either blank is predicted or the limit is hit.
+      blank_penalty:
+        The score used to penalize blank probability.
+    """
+    assert len(streams) == encoder_out.size(0)
+    assert encoder_out.ndim == 3
+
+    if max_sym_per_frame == 1:
+        return _streaming_greedy_search_batch(
+            model=model,
+            encoder_out=encoder_out,
+            streams=streams,
+            blank_penalty=blank_penalty,
+        )
+
+    is_onnx = isinstance(model, (OnnxTransducerModel, OnnxStreamingTransducerModel))
+
+    if is_onnx:
+        device = torch.device("cpu")
+        blank_id = getattr(model, "blank_id", 0)
+        context_size = model.context_size
+    else:
+        blank_id = model.decoder.blank_id
+        context_size = model.decoder.context_size
+        device = model.device
+
+    T = encoder_out.size(1)
+
+    for stream in streams:
+        if stream.decoder_out is not None:
+            continue
+        else:
+            if len(stream.hyp) == 0:
+                stream.hyp = [-1] * (context_size - 1) + [blank_id]
+            decoder_input = torch.tensor(
+                [stream.hyp[-context_size:]], device=device, dtype=torch.int64
+            ).reshape(1, context_size)
+            if is_onnx:
+                stream.decoder_out = model.run_decoder(decoder_input)
+            else:
+                decoder_out = model.decoder(decoder_input, need_pad=False)
                 decoder_out = model.joiner.decoder_proj(decoder_out)
-                streams[i].decoder_out = decoder_out
+                stream.decoder_out = decoder_out
+
+    batch_size = len(streams)
+
+    for t in range(T):
+        current_encoder_out = encoder_out[:, t, :]  # (N, C)
+
+        sym_per_frame = [0] * batch_size
+        done = [False] * batch_size
+
+        while not all(done):
+            decoder_out = torch.cat([stream.decoder_out for stream in streams], dim=0)
+
+            if is_onnx:
+                logits = model.run_joiner(current_encoder_out, decoder_out)
+            else:
+                logits = model.joiner(
+                    current_encoder_out,
+                    decoder_out,
+                    project_input=False,
+                )
+
+            assert logits.ndim == 2, logits.shape
+
+            if blank_penalty != 0.0:
+                logits[:, 0] -= blank_penalty
+
+            y = logits.argmax(dim=1).tolist()
+            for i, v in enumerate(y):
+                if done[i]:
+                    continue
+                if v == blank_id:
+                    done[i] = True
+                else:
+                    streams[i].hyp.append(v)
+                    sym_per_frame[i] += 1
+                    decoder_input = torch.tensor(
+                        [streams[i].hyp[-context_size:]],
+                        device=device,
+                        dtype=torch.int64,
+                    )
+                    if is_onnx:
+                        streams[i].decoder_out = model.run_decoder(decoder_input)
+                    else:
+                        decoder_out = model.decoder(
+                            decoder_input,
+                            need_pad=False,
+                        )
+                        decoder_out = model.joiner.decoder_proj(decoder_out)
+                        streams[i].decoder_out = decoder_out
+                    if sym_per_frame[i] >= max_sym_per_frame:
+                        done[i] = True
 
 
 class HypsShape:
@@ -1062,6 +1212,62 @@ def ctc_greedy_search(
     return [h[h != blank_id].tolist() for h in hyps]
 
 
+def streaming_ctc_greedy_search(
+    model,
+    encoder_out: torch.Tensor,
+    encoder_out_lens: torch.Tensor,
+    streams: List[DecodeStream],
+    blank_id: int = 0,
+) -> None:
+    """Streaming CTC greedy search in batch mode.
+
+    Decodes each chunk of encoder output and appends non-blank tokens to
+    the corresponding stream's hyp list. Handles the boundary between chunks
+    by tracking the last emitted token per stream to avoid duplicating tokens
+    at chunk boundaries.
+
+    Args:
+      model:
+        The model (JIT/PyTorch with ctc_output method, or OnnxStreamingCtcModel).
+        For ONNX models, encoder_out is already the CTC log_probs.
+      encoder_out:
+        For JIT models: output from the encoder, shape (N, T, C).
+        For ONNX models: CTC log_probs directly, shape (N, T, vocab_size).
+      encoder_out_lens:
+        A 1-D tensor of shape (N,) containing valid frame counts per stream.
+      streams:
+        A list of DecodeStream objects.
+      blank_id:
+        The blank token id.
+    """
+    assert len(streams) == encoder_out.size(0)
+    assert encoder_out.ndim == 3
+
+    is_onnx = isinstance(model, (OnnxCtcModel, OnnxStreamingCtcModel))
+
+    if is_onnx:
+        ctc_output = encoder_out
+    else:
+        ctc_output = model.ctc_output(encoder_out)
+
+    batch = ctc_output.size(0)
+    index = ctc_output.argmax(dim=-1)  # (N, T)
+
+    for i in range(batch):
+        valid_len = encoder_out_lens[i].item()
+        tokens = index[i, :valid_len]
+
+        prev = streams[i].hyp[-1] if len(streams[i].hyp) > 0 else -1
+
+        for t in range(valid_len):
+            tok = tokens[t].item()
+            if tok == blank_id:
+                prev = blank_id
+            elif tok != prev:
+                streams[i].hyp.append(tok)
+                prev = tok
+
+
 def _step_worker(
     log_probs: torch.Tensor,
     indexes: torch.Tensor,
@@ -1677,81 +1883,3 @@ def keywords_search(
     for i in range(N):
         ans.append(sorted_ans[unsorted_indices[i]])
     return ans
-
-
-
-def greedy_search_transducer_batch(model, encoder_out, encoder_out_lens):
-    """Batch greedy search for non-streaming transducer (ONNX)."""
-    assert encoder_out.ndim == 3
-
-    packed = torch.nn.utils.rnn.pack_padded_sequence(
-        input=encoder_out,
-        lengths=encoder_out_lens.cpu(),
-        batch_first=True,
-        enforce_sorted=False,
-    )
-
-    blank_id = 0
-    N = encoder_out.size(0)
-    context_size = model.context_size
-    hyps = [[blank_id] * context_size for _ in range(N)]
-
-    decoder_input = torch.tensor(hyps, dtype=torch.int64)
-    decoder_out = model.run_decoder(decoder_input)
-
-    offset = 0
-    for batch_size in packed.batch_sizes.tolist():
-        start = offset
-        end = offset + batch_size
-        current_encoder_out = packed.data[start:end]
-        offset = end
-
-        decoder_out = decoder_out[:batch_size]
-        logits = model.run_joiner(current_encoder_out, decoder_out)
-
-        y = logits.argmax(dim=1).tolist()
-        emitted = False
-        for i, v in enumerate(y):
-            if v != blank_id:
-                hyps[i].append(v)
-                emitted = True
-        if emitted:
-            decoder_input = [h[-context_size:] for h in hyps[:batch_size]]
-            decoder_input = torch.tensor(decoder_input, dtype=torch.int64)
-            decoder_out = model.run_decoder(decoder_input)
-
-    sorted_ans = [h[context_size:] for h in hyps]
-    ans = []
-    unsorted_indices = packed.unsorted_indices.tolist()
-    for i in range(N):
-        ans.append(sorted_ans[unsorted_indices[i]])
-    return ans
-
-
-def greedy_search_transducer_streaming_onnx(
-    model,
-    encoder_out,
-    context_size,
-    decoder_out=None,
-    hyp=None,
-):
-    """Streaming greedy search for ONNX transducer. Processes one chunk."""
-    blank_id = 0
-
-    if decoder_out is None:
-        hyp = [blank_id] * context_size
-        decoder_input = torch.tensor([hyp], dtype=torch.int64)
-        decoder_out = model.run_decoder(decoder_input)
-
-    encoder_out = encoder_out.squeeze(0)
-    T = encoder_out.size(0)
-    for t in range(T):
-        cur_encoder_out = encoder_out[t : t + 1]
-        joiner_out = model.run_joiner(cur_encoder_out, decoder_out).squeeze(0)
-        y = joiner_out.argmax(dim=0).item()
-        if y != blank_id:
-            hyp.append(y)
-            decoder_input = torch.tensor([hyp[-context_size:]], dtype=torch.int64)
-            decoder_out = model.run_decoder(decoder_input)
-
-    return hyp, decoder_out

@@ -8,17 +8,9 @@
 
 ::: zipformer.modules.model
 
-## Decoder
-
-::: zipformer.modules.decoder
-
 ## Attention Decoder
 
 ::: zipformer.modules.attention_decoder
-
-## Joiner
-
-::: zipformer.modules.joiner
 
 ## Subsampling
 

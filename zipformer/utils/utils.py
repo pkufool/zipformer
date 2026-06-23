@@ -15,6 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import argparse
 import json
 import logging
@@ -43,35 +44,37 @@ LOG_EPS = math.log(1e-10)
 Pathlike = Union[str, Path]
 TORCH_VERSION = version.parse(torch.__version__)
 
-Symbol = TypeVar('Symbol')
+Symbol = TypeVar("Symbol")
+
 
 # Disable __repr__ otherwise it could freeze e.g. Jupyter.
 @dataclass(repr=False)
 class SymbolTable(Generic[Symbol]):
-    '''SymbolTable that maps symbol IDs, found on the FSA arcs to
+    """SymbolTable that maps symbol IDs, found on the FSA arcs to
     actual objects. These objects can be arbitrary Python objects
     that can serve as keys in a dictionary (i.e. they need to be
     hashable and immutable).
 
     The SymbolTable can only be read to/written from disk if the
     symbols are strings.
-    '''
+    """
+
     _id2sym: Dict[int, Symbol] = field(default_factory=dict)
-    '''Map an integer to a symbol.
-    '''
+    """Map an integer to a symbol.
+    """
 
     _sym2id: Dict[Symbol, int] = field(default_factory=dict)
-    '''Map a symbol to an integer.
-    '''
+    """Map a symbol to an integer.
+    """
 
     _next_available_id: int = 1
-    '''A helper internal field that helps adding new symbols
+    """A helper internal field that helps adding new symbols
     to the table efficiently.
-    '''
+    """
 
-    eps: Symbol = '<eps>'
-    '''Null symbol, always mapped to index 0.
-    '''
+    eps: Symbol = "<eps>"
+    """Null symbol, always mapped to index 0.
+    """
 
     def __post_init__(self):
         for idx, sym in self._id2sym.items():
@@ -92,8 +95,8 @@ class SymbolTable(Generic[Symbol]):
         self._next_available_id = max(self._id2sym) + 1
 
     @staticmethod
-    def from_str(s: str) -> 'SymbolTable':
-        '''Build a symbol table from a string.
+    def from_str(s: str) -> "SymbolTable":
+        """Build a symbol table from a string.
 
         The string consists of lines. Every line has two fields separated
         by space(s), tab(s) or both. The first field is the symbol and the
@@ -104,29 +107,30 @@ class SymbolTable(Generic[Symbol]):
             The input string with the format described above.
         Returns:
           An instance of :class:`SymbolTable`.
-        '''
+        """
         id2sym: Dict[int, str] = dict()
         sym2id: Dict[str, int] = dict()
 
-        for line in s.split('\n'):
+        for line in s.split("\n"):
             fields = line.split()
             if len(fields) == 0:
                 continue  # skip empty lines
-            assert len(fields) == 2, \
-                    f'Expect a line with 2 fields. Given: {len(fields)}'
+            assert len(fields) == 2, (
+                f"Expect a line with 2 fields. Given: {len(fields)}"
+            )
             sym, idx = fields[0], int(fields[1])
-            assert sym not in sym2id, f'Duplicated symbol {sym}'
-            assert idx not in id2sym, f'Duplicated id {idx}'
+            assert sym not in sym2id, f"Duplicated symbol {sym}"
+            assert idx not in id2sym, f"Duplicated id {idx}"
             id2sym[idx] = sym
             sym2id[sym] = idx
 
-        eps = id2sym.get(0, '<eps>')
+        eps = id2sym.get(0, "<eps>")
 
         return SymbolTable(_id2sym=id2sym, _sym2id=sym2id, eps=eps)
 
     @staticmethod
-    def from_file(filename: str) -> 'SymbolTable':
-        '''Build a symbol table from file.
+    def from_file(filename: str) -> "SymbolTable":
+        """Build a symbol table from file.
 
         Every line in the symbol table file has two fields separated by
         space(s), tab(s) or both. The following is an example file:
@@ -145,23 +149,23 @@ class SymbolTable(Generic[Symbol]):
         Returns:
           An instance of :class:`SymbolTable`.
 
-        '''
-        with open(filename, 'r', encoding='utf-8') as f:
+        """
+        with open(filename, "r", encoding="utf-8") as f:
             return SymbolTable.from_str(f.read().strip())
 
     def to_str(self) -> str:
-        '''
+        """
         Returns:
           Return a string representation of this object. You can pass
           it to the method ``from_str`` to recreate an identical object.
-        '''
-        s = ''
+        """
+        s = ""
         for idx, symbol in sorted(self._id2sym.items()):
-            s += f'{symbol} {idx}\n'
+            s += f"{symbol} {idx}\n"
         return s
 
     def to_file(self, filename: str):
-        '''Serialize the SymbolTable to a file.
+        """Serialize the SymbolTable to a file.
 
         Every line in the symbol table file has two fields separated by
         space(s), tab(s) or both. The following is an example file:
@@ -176,13 +180,13 @@ class SymbolTable(Generic[Symbol]):
         Args:
           filename:
             Name of the symbol table file. Its format is documented above.
-        '''
-        with open(filename, 'w') as f:
+        """
+        with open(filename, "w") as f:
             for idx, symbol in sorted(self._id2sym.items()):
                 print(symbol, idx, file=f)
 
     def add(self, symbol: Symbol, index: Optional[int] = None) -> int:
-        '''Add a new symbol to the SymbolTable.
+        """Add a new symbol to the SymbolTable.
 
         Args:
             symbol:
@@ -193,7 +197,7 @@ class SymbolTable(Generic[Symbol]):
 
         Returns:
             The int id to which the symbol has been assigned.
-        '''
+        """
         # Already in the table? Return its ID.
         if symbol in self._sym2id:
             return self._sym2id[symbol]
@@ -202,8 +206,10 @@ class SymbolTable(Generic[Symbol]):
             index = self._next_available_id
         # Specific ID provided but not available.
         if index in self._id2sym:
-            raise ValueError(f"Cannot assign id '{index}' to '{symbol}' - "
-                             f"already occupied by {self._id2sym[index]}")
+            raise ValueError(
+                f"Cannot assign id '{index}' to '{symbol}' - "
+                f"already occupied by {self._id2sym[index]}"
+            )
         self._sym2id[symbol] = index
         self._id2sym[index] = symbol
 
@@ -214,7 +220,7 @@ class SymbolTable(Generic[Symbol]):
         return index
 
     def get(self, k: Union[int, Symbol]) -> Union[Symbol, int]:
-        '''Get a symbol for an id or get an id for a symbol
+        """Get a symbol for an id or get an id for a symbol
 
         Args:
           k:
@@ -224,14 +230,14 @@ class SymbolTable(Generic[Symbol]):
 
         Returns:
           An id or a symbol depending on the given `k`.
-        '''
+        """
         if isinstance(k, int):
             return self._id2sym[k]
         else:
             return self._sym2id[k]
 
-    def merge(self, other: 'SymbolTable') -> 'SymbolTable':
-        '''Create a union of two SymbolTables.
+    def merge(self, other: "SymbolTable") -> "SymbolTable":
+        """Create a union of two SymbolTables.
         Raises an AssertionError if the same IDs are occupied by
         different symbols.
 
@@ -241,7 +247,7 @@ class SymbolTable(Generic[Symbol]):
 
         Returns:
             A new symbol table.
-        '''
+        """
         self._check_compatible(other)
 
         id2sym = {**self._id2sym, **other._id2sym}
@@ -249,22 +255,27 @@ class SymbolTable(Generic[Symbol]):
 
         return SymbolTable(_id2sym=id2sym, _sym2id=sym2id, eps=self.eps)
 
-    def _check_compatible(self, other: 'SymbolTable') -> None:
+    def _check_compatible(self, other: "SymbolTable") -> None:
         # Epsilon compatibility
-        assert self.eps == other.eps, f'Mismatched epsilon symbol: ' \
-                                      f'{self.eps} != {other.eps}'
+        assert self.eps == other.eps, (
+            f"Mismatched epsilon symbol: {self.eps} != {other.eps}"
+        )
         # IDs compatibility
         common_ids = set(self._id2sym).intersection(other._id2sym)
         for idx in common_ids:
-            assert self[idx] == other[idx], f'ID conflict for id: {idx}, ' \
-                                            f'self[idx] = "{self[idx]}", ' \
-                                            f'other[idx] = "{other[idx]}"'
+            assert self[idx] == other[idx], (
+                f"ID conflict for id: {idx}, "
+                f'self[idx] = "{self[idx]}", '
+                f'other[idx] = "{other[idx]}"'
+            )
         # Symbols compatibility
         common_symbols = set(self._sym2id).intersection(other._sym2id)
         for sym in common_symbols:
-            assert self[sym] == other[sym], f'ID conflict for id: {sym}, ' \
-                                            f'self[sym] = "{self[sym]}", ' \
-                                            f'other[sym] = "{other[sym]}"'
+            assert self[sym] == other[sym], (
+                f"ID conflict for id: {sym}, "
+                f'self[sym] = "{self[sym]}", '
+                f'other[sym] = "{other[sym]}"'
+            )
 
     def __getitem__(self, item: Union[int, Symbol]) -> Union[Symbol, int]:
         return self.get(item)
@@ -278,7 +289,7 @@ class SymbolTable(Generic[Symbol]):
     def __len__(self) -> int:
         return len(self._id2sym)
 
-    def __eq__(self, other: 'SymbolTable') -> bool:
+    def __eq__(self, other: "SymbolTable") -> bool:
         if len(self) != len(other):
             return False
 
@@ -290,17 +301,16 @@ class SymbolTable(Generic[Symbol]):
 
     @property
     def ids(self) -> List[int]:
-        '''Returns a list of integer IDs corresponding to the symbols.
-        '''
+        """Returns a list of integer IDs corresponding to the symbols."""
         ans = list(self._id2sym.keys())
         ans.sort()
         return ans
 
     @property
     def symbols(self) -> List[Symbol]:
-        '''Returns a list of symbols (e.g., strings) corresponding to
+        """Returns a list of symbols (e.g., strings) corresponding to
         the integer IDs.
-        '''
+        """
         ans = list(self._sym2id.keys())
         ans.sort()
         return ans
@@ -324,6 +334,22 @@ def num_tokens(
     if 0 in ans:
         num_tokens -= 1
     return num_tokens
+
+
+def token_ids_to_text(token_ids: List[int], token_table: SymbolTable) -> str:
+    """Convert token IDs to text using a SymbolTable.
+
+    Supports byte-level BPE tokens in the format <0xNN>.
+    """
+    text = b""
+    for i in token_ids:
+        token = token_table[i]
+        if len(token) >= 4 and token[:3] == "<0x" and token[-1] == ">":
+            byte_val = int(token[1:-1], base=16)
+            text += byte_val.to_bytes(1, byteorder="little")
+        else:
+            text += token.encode(encoding="utf-8")
+    return text.decode(encoding="utf-8").replace("▁", " ").strip()
 
 
 def remove_punctuation(s: str) -> str:
@@ -469,6 +495,151 @@ def make_pad_mask(
     if pad_left:
         return expanded_lengths < (max_len - lengths).unsqueeze(1)
     return expanded_lengths >= lengths.unsqueeze(-1)
+
+
+def stack_states(state_list: List[List[torch.Tensor]]) -> List[torch.Tensor]:
+    """Stack list of zipformer states that correspond to separate utterances
+    into a single emformer state, so that it can be used as an input for
+    zipformer when those utterances are formed into a batch.
+
+    Args:
+      state_list:
+        Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance. For element-n,
+        state_list[n] is a list of cached tensors of all encoder layers. For layer-i,
+        state_list[n][i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1,
+        cached_val2, cached_conv1, cached_conv2).
+        state_list[n][-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+        state_list[n][-1] is processed_lens of shape (batch,), which records the number
+        of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Note:
+      It is the inverse of :func:`unstack_states`.
+    """
+    batch_size = len(state_list)
+    assert (len(state_list[0]) - 2) % 6 == 0, len(state_list[0])
+    tot_num_layers = (len(state_list[0]) - 2) // 6
+
+    batch_states = []
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key = torch.cat(
+            [state_list[i][layer_offset] for i in range(batch_size)], dim=1
+        )
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn = torch.cat(
+            [state_list[i][layer_offset + 1] for i in range(batch_size)], dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1 = torch.cat(
+            [state_list[i][layer_offset + 2] for i in range(batch_size)], dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2 = torch.cat(
+            [state_list[i][layer_offset + 3] for i in range(batch_size)], dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1 = torch.cat(
+            [state_list[i][layer_offset + 4] for i in range(batch_size)], dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2 = torch.cat(
+            [state_list[i][layer_offset + 5] for i in range(batch_size)], dim=0
+        )
+        batch_states += [
+            cached_key,
+            cached_nonlin_attn,
+            cached_val1,
+            cached_val2,
+            cached_conv1,
+            cached_conv2,
+        ]
+
+    cached_embed_left_pad = torch.cat(
+        [state_list[i][-2] for i in range(batch_size)], dim=0
+    )
+    batch_states.append(cached_embed_left_pad)
+
+    processed_lens = torch.cat([state_list[i][-1] for i in range(batch_size)], dim=0)
+    batch_states.append(processed_lens)
+
+    return batch_states
+
+
+def unstack_states(batch_states: List[torch.Tensor]) -> List[List[torch.Tensor]]:
+    """Unstack the zipformer state corresponding to a batch of utterances
+    into a list of states, where the i-th entry is the state from the i-th
+    utterance in the batch.
+
+    Note:
+      It is the inverse of :func:`stack_states`.
+
+    Args:
+        batch_states: A list of cached tensors of all encoder layers. For layer-i,
+          states[i*6:(i+1)*6] is (cached_key, cached_nonlin_attn, cached_val1, cached_val2,
+          cached_conv1, cached_conv2).
+          state_list[-2] is the cached left padding for ConvNeXt module,
+          of shape (batch_size, num_channels, left_pad, num_freqs)
+          states[-1] is processed_lens of shape (batch,), which records the number
+          of processed frames (at 50hz frame rate, after encoder_embed) for each sample in batch.
+
+    Returns:
+        state_list: A list of list. Each element in state_list corresponding to the internal state
+        of the zipformer model for a single utterance.
+    """
+    assert (len(batch_states) - 2) % 6 == 0, len(batch_states)
+    tot_num_layers = (len(batch_states) - 2) // 6
+
+    processed_lens = batch_states[-1]
+    batch_size = processed_lens.shape[0]
+
+    state_list = [[] for _ in range(batch_size)]
+
+    for layer in range(tot_num_layers):
+        layer_offset = layer * 6
+        # cached_key: (left_context_len, batch_size, key_dim)
+        cached_key_list = batch_states[layer_offset].chunk(chunks=batch_size, dim=1)
+        # cached_nonlin_attn: (num_heads, batch_size, left_context_len, head_dim)
+        cached_nonlin_attn_list = batch_states[layer_offset + 1].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val1: (left_context_len, batch_size, value_dim)
+        cached_val1_list = batch_states[layer_offset + 2].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_val2: (left_context_len, batch_size, value_dim)
+        cached_val2_list = batch_states[layer_offset + 3].chunk(
+            chunks=batch_size, dim=1
+        )
+        # cached_conv1: (#batch, channels, left_pad)
+        cached_conv1_list = batch_states[layer_offset + 4].chunk(
+            chunks=batch_size, dim=0
+        )
+        # cached_conv2: (#batch, channels, left_pad)
+        cached_conv2_list = batch_states[layer_offset + 5].chunk(
+            chunks=batch_size, dim=0
+        )
+        for i in range(batch_size):
+            state_list[i] += [
+                cached_key_list[i],
+                cached_nonlin_attn_list[i],
+                cached_val1_list[i],
+                cached_val2_list[i],
+                cached_conv1_list[i],
+                cached_conv2_list[i],
+            ]
+
+    cached_embed_left_pad_list = batch_states[-2].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(cached_embed_left_pad_list[i])
+
+    processed_lens_list = batch_states[-1].chunk(chunks=batch_size, dim=0)
+    for i in range(batch_size):
+        state_list[i].append(processed_lens_list[i])
+
+    return state_list
 
 
 def get_parameter_groups_with_lrs(

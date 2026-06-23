@@ -11,11 +11,18 @@ requires-python = ">=3.10"
 license = {text = "Apache-2.0"}
 authors = [{ name = "Next-gen Kaldi Team" }]
 dependencies = [
-  "torch>=1.13",
-  "torchaudio>=0.13",
-  "webdataset>=0.2.86",
-  "soundfile>=0.13",
-  "numpy>=1.21",
+  "torch>=2.1.0",
+  "torchaudio>=2.1.0",
+  "simple-sentencepiece>=0.13",
+  "atdataset>=0.1.5",
+  "tqdm",
+  "huggingface_hub",
+  "modelscope",
+  "onnx",
+  "onnxconverter_common",
+  "onnxruntime",
+  "kaldifst",
+  "kaldialign",
 ]
 classifiers = [
   "License :: OSI Approved :: Apache Software License",
@@ -31,6 +38,7 @@ classifiers = [
 docs = [
   "mkdocs-material>=9.0",
   "mkdocstrings[python]>=0.24",
+  "mkdocs-minify-plugin",
 ]
 
 [project.scripts]

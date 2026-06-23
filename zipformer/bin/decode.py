@@ -550,9 +550,7 @@ def main():
         key, path = item.split(",")
         test_sets[key] = path
 
-    feature_extractor = Fbank(
-        sample_rate=params.sample_rate, n_mels=params.feature_dim
-    )
+    feature_extractor = Fbank(sample_rate=params.sample_rate, n_mels=params.feature_dim)
 
     for test_set, manifest in test_sets.items():
         test_dl = ATDataloader(

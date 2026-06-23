@@ -21,6 +21,7 @@ from .utils import (
     make_pad_mask,
     is_module_available,
     num_tokens,
+    token_ids_to_text,
     remove_punctuation,
     store_transcripts,
     str2bool,
@@ -29,6 +30,8 @@ from .utils import (
     torch_autocast,
     write_error_stats,
     pad_sequences,
+    stack_states,
+    unstack_states,
     SymbolTable,
     raise_grad_scale_is_too_small_error,
 )
