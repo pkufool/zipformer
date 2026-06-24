@@ -35,9 +35,8 @@ jobs:
 
       - name: Build docs
         run: |
+          mkdocs build -f mkdocs-zh.yml -d site
           mkdocs build -f mkdocs.yml -d site/en
-          mkdocs build -f mkdocs-zh.yml -d site/zh
-          cp docs/custom/index.html site/index.html
 
       - uses: actions/upload-pages-artifact@v3
         with:

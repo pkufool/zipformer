@@ -3,7 +3,7 @@ site_url: https://pkufool.github.io/zipformer
 site_description: A faster and better encoder for ASR
 
 docs_dir: 'docs/zh'
-site_dir: 'site/zh'
+site_dir: 'site'
 
 repo_name: pkufool/zipformer
 repo_url: https://github.com/pkufool/zipformer
@@ -69,7 +69,7 @@ extra:
       link: /zipformer/en/
       lang: en
     - name: 中文
-      link: /zipformer/zh/
+      link: /zipformer/
       lang: zh
   social:
     - icon: fontawesome/brands/github
