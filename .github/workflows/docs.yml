@@ -35,12 +35,12 @@ jobs:
 
       - name: Build docs
         run: |
-          mkdocs build -f mkdocs-zh.yml -d site
-          mkdocs build -f mkdocs.yml -d site/en
+          mkdocs build -f docs/mkdocs-zh.yml -d site
+          mkdocs build -f docs/mkdocs.yml -d site/en
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: docs/site
 
   deploy:
     needs: build

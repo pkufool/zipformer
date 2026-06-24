@@ -2,7 +2,7 @@ site_name: Zipformer
 site_url: https://pkufool.github.io/zipformer
 site_description: A faster and better encoder for ASR
 
-docs_dir: 'docs/en'
+docs_dir: 'en'
 site_dir: 'site/en'
 
 repo_name: pkufool/zipformer
@@ -13,7 +13,7 @@ copyright: Copyright &copy; 2019 - 2026 Next-Gen Kaldi Team (XiaoMi AI Lab)
 theme:
   name: material
   language: en
-  custom_dir: docs/custom
+  custom_dir: custom
   palette:
     - scheme: default
       primary: indigo
