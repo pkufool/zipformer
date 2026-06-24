@@ -13,8 +13,6 @@ copyright: Copyright &copy; 2019 - 2026 新一代 Kaldi 团队 (小米 AI Lab)
 theme:
   name: material
   custom_dir: docs/custom
-  logo: assets/pic/k2.png
-  favicon: assets/pic/k2.png
   language: zh
   palette:
     - scheme: default
@@ -68,7 +66,7 @@ extra_css:
 extra:
   alternate:  
     - name: English
-      link: /zipformer/
+      link: /zipformer/en/
       lang: en
     - name: 中文
       link: /zipformer/zh/
