@@ -23,7 +23,7 @@ zipformer is a speech encoder that achieves both high performance and efficiency
 
 ### Models
 
-zipformer ASR models are available in xlarge, large, medium, and small variants, with both streaming and non-streaming versions. The table below provides download links. For more details, please refer to the [documentation](https://pkufool.github.io/zipformer/models).
+zipformer ASR models are available in xlarge, large, medium, and small variants, with both streaming and non-streaming versions. The table below provides download links. For more details, please refer to the [documentation](https://pkufool.github.io/zipformer/en/models).
 
 | Model | Parameters | ModelScope | Huggingface | Languages | Architectures |
 | -- | -- | -- | -- | -- | -- |
@@ -49,7 +49,7 @@ pip install zipformer
 ## Usage
 
 > [!TIP]
-> The examples below use the non-streaming medium model. For more models, please refer to the [documentation](https://pkufool.github.io/zipformer/models).
+> The examples below use the non-streaming medium model. For more models, please refer to the [documentation](https://pkufool.github.io/zipformer/en/models).
 
 ### Command Line
 
